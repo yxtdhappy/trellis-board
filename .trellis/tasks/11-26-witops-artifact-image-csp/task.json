@@ -1,0 +1,34 @@
+{
+  "id": "witops-artifact-image-csp",
+  "name": "witops-artifact-image-csp",
+  "title": "Board 预览 WitOps 原文时图片无法显示",
+  "description": "Board 页面 CSP 未放行 WitOps 图片域名，从 WitOps 同步的 task.md 截图在工件查看弹窗中被浏览器拦截。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "6ba7575e1ae105c36084fdca1fabbd8d381ed01d",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "commits": [
+      "6ba7575e1ae105c36084fdca1fabbd8d381ed01d"
+    ],
+    "commit_set_at": "2026-11-26T13:56:05"
+  }
+}

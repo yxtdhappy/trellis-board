@@ -3,7 +3,7 @@
   "name": "project-rail-branch-rebind",
   "title": "项目栏已关联分支图标支持重新绑定分支",
   "description": "项目栏已关联状态下点击分支绑定图标弹出分支选择弹窗，可把本地仓库重新绑定到当前检出的其他分支",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "task_type": "complex",
   "work_type": "fullstack",
@@ -13,7 +13,7 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-11-25",
-  "completedAt": null,
+  "completedAt": "2026-11-26",
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -51,6 +51,12 @@
       ],
       "diff": "sha256:33a3ac3239a7e8f573024949dc210d8a6394ff6fd68227db435c5eea6e78d469",
       "report_sha256": "7ab9c48bb6d11d472b30159758ba3b77c5e34aac62850a9ca5346a6c689d7c3a"
+    },
+    "check_override": {
+      "by": "yuhaojie",
+      "reason": "用户明确要求直接归档；接受本次 inline self-check 结果，Rust 编译验证留待 CI",
+      "commit": "2fd7b57666d3e45acb0199ecf8cffd14d7021998",
+      "at": "2026-11-26T10:40:07"
     }
   }
 }

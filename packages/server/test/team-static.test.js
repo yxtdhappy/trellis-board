@@ -139,6 +139,10 @@ test('团队模式静态资源能提供字体与外部主题脚本', async (t) =
   assert.match(String(script.headers['content-security-policy']), /script-src 'self'/)
   assert.match(
     String(script.headers['content-security-policy']),
+    /img-src 'self' http:\/\/witops\.weintdata\.cn/,
+  )
+  assert.match(
+    String(script.headers['content-security-policy']),
     /connect-src 'self' ipc: http:\/\/ipc\.localhost/,
   )
   assert.match(

@@ -21,6 +21,8 @@ export function securityHeaders() {
   return {
     'content-security-policy':
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      // WitOps 同步的 task.md 保留平台绝对图片地址，工件预览需要直连该源。
+      "img-src 'self' http://witops.weintdata.cn; " +
       "connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; " +
       "frame-src 'self' http://127.0.0.1:* http://localhost:*; " +
       "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -51,7 +52,12 @@ function createTask(dir, workType = 'backend', withCheckReport = true) {
     'test',
     '--no-start',
   ])
-  const taskDir = path.join(dir, '.trellis', 'tasks', fs.readdirSync(path.join(dir, '.trellis', 'tasks'))[0])
+  const taskDir = path.join(
+    dir,
+    '.trellis',
+    'tasks',
+    fs.readdirSync(path.join(dir, '.trellis', 'tasks'))[0],
+  )
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true })
   fs.writeFileSync(path.join(dir, 'src', 'feature.js'), 'export const value = 1\n')
   if (withCheckReport) {
@@ -197,6 +203,108 @@ test('verify returns exit 4 and authorize-no-evidence records an override', () =
     ])
     const data = JSON.parse(fs.readFileSync(path.join(taskDir, 'task.json'), 'utf8'))
     assert.equal(data.meta.check_override.commit, commit)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('line-ending changes after binding keep the check report valid', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    assert.equal(fs.readFileSync(reportPath).includes('\r\n'), false)
+    fs.writeFileSync(reportPath, stamped.replace(/\n/g, '\r\n'))
+    const commit = commitWork(dir, 'feat: crlf binding')
+    runTask(dir, ['set-commit', taskDir, commit])
+    fs.writeFileSync(reportPath, stamped)
+    runTask(dir, ['verify', taskDir, '--strict'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('content changes after binding are still rejected', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    fs.writeFileSync(reportPath, stamped.replace(/\n/g, '\r\n'))
+    const commit = commitWork(dir, 'feat: crlf content change')
+    runTask(dir, ['set-commit', taskDir, commit])
+    fs.writeFileSync(reportPath, stamped.replace('## Check Complete', '## Check Changed'))
+    const result = runTask(dir, ['verify', taskDir, '--strict'], 1)
+    assert.match(result.stdout + result.stderr, /check_report_changed_after_binding/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('legacy raw-byte bindings remain valid for unchanged reports', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    fs.writeFileSync(reportPath, stamped.replace(/\n/g, '\r\n'))
+    const commit = commitWork(dir, 'feat: legacy binding')
+    runTask(dir, ['set-commit', taskDir, commit])
+    const taskJsonPath = path.join(taskDir, 'task.json')
+    const data = JSON.parse(fs.readFileSync(taskJsonPath, 'utf8'))
+    data.meta.check_binding.report_sha256 = crypto
+      .createHash('sha256')
+      .update(fs.readFileSync(reportPath))
+      .digest('hex')
+    fs.writeFileSync(taskJsonPath, `${JSON.stringify(data, null, 2)}\n`)
+    runTask(dir, ['verify', taskDir, '--strict'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('BOM and CR-only reports hash the same as canonical LF', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    const commit = commitWork(dir, 'feat: bom and cr binding')
+    runTask(dir, ['set-commit', taskDir, commit])
+    fs.writeFileSync(
+      reportPath,
+      `${String.fromCharCode(0xfeff)}${stamped.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10))}`,
+    )
+    runTask(dir, ['verify', taskDir, '--strict'])
+    fs.writeFileSync(reportPath, stamped.replace(/\n/g, '\r'))
+    runTask(dir, ['verify', taskDir, '--strict'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('stamp-check preserves front matter when the report starts with a BOM', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const original = fs.readFileSync(reportPath, 'utf8')
+    fs.writeFileSync(reportPath, `${String.fromCharCode(0xfeff)}${original}`)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    assert.equal(stamped.charCodeAt(0), '-'.charCodeAt(0))
+    assert.equal(stamped.match(/^---$/gm)?.length, 2)
+    assert.match(stamped, /^mode: independent$/m)
+    assert.match(stamped, /^agent: trellis-check$/m)
+    assert.match(stamped, /^session: ses_test$/m)
+    const commit = commitWork(dir, 'feat: bom stamp')
+    runTask(dir, ['set-commit', taskDir, commit])
+    runTask(dir, ['verify', taskDir, '--strict'])
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

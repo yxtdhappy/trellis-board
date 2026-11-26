@@ -1,0 +1,36 @@
+{
+  "id": "server-switch-data-reset",
+  "name": "server-switch-data-reset",
+  "title": "切换服务器地址时备份并清理客户端数据",
+  "description": "桌面客户端退出后重新登录时，若用户修改了服务器地址，先提示切换会清除旧服务器的登录数据与项目绑定数据；确认后备份客户端身份/绑定数据并删除，再按新地址登录。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "7fb97b546cc3adb9b2a3527766d27148cca8976a",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-26T12:11:22",
+    "task_type_updated_reason": "跨 Rust 后端与登录页前端，含文件备份/删除与失败恢复",
+    "commits": [
+      "7fb97b546cc3adb9b2a3527766d27148cca8976a"
+    ],
+    "commit_set_at": "2026-11-26T13:33:13"
+  }
+}

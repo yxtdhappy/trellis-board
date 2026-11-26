@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress'
 import { readAppNameFromMeta, resolveAppName } from '@/lib/app-name.js'
 import { errorMessage, invoke, listen } from './tauri.ts'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type StepId =
   | 'node:check'
@@ -81,6 +82,12 @@ type AppStatus = {
 
 type Credentials = { serverUrl: string; username: string; password: string }
 
+type LoginPreflight = {
+  requiresReset?: boolean
+  previousServerUrl?: string | null
+  backupRoot?: string
+}
+
 function validateInput({ serverUrl, username, password }: Credentials): string | null {
   const trimmedUrl = serverUrl.trim()
   if (!trimmedUrl) return '请填写服务器地址。'
@@ -96,6 +103,7 @@ function validateInput({ serverUrl, username, password }: Credentials): string |
 }
 
 export function LoginApp() {
+  const confirm = useConfirm()
   const [phase, setPhase] = useState<'pending' | 'env' | 'login'>('pending')
   const [steps, setSteps] = useState<{ active: StepId | null; done: StepId[] }>({
     active: null,
@@ -313,12 +321,35 @@ export function LoginApp() {
       return
     }
     setSubmitting(true)
-    setLoginStatus('正在验证账号并建立设备会话…')
+    const payload = {
+      serverUrl: value.serverUrl.trim(),
+      username: value.username.trim(),
+      password: value.password,
+    }
     try {
+      // 换服务器会清掉旧服务器的登录与绑定数据，必须先让用户确认再动手。
+      const preflight = await invoke<LoginPreflight>('desktop_login_preflight', {
+        serverUrl: payload.serverUrl,
+      })
+      if (preflight.requiresReset) {
+        const confirmed = await confirm({
+          title: '切换服务器将清除本地数据',
+          description: `从 ${preflight.previousServerUrl ?? '上一个服务器'} 切换到 ${payload.serverUrl}。\n切换会清除旧服务器的登录数据与项目绑定数据（设备凭证、项目绑定、同步记录、插件配置）。\n确认后先备份到 ${preflight.backupRoot ?? '本机数据目录'}，保留最近 3 份。`,
+          confirmText: '切换并清除',
+          cancelText: '取消',
+          tone: 'danger',
+        })
+        if (!confirmed) {
+          setSubmitting(false)
+          setLoginStatus('已取消切换服务器地址，未做任何改动。')
+          requestAnimationFrame(() => serverUrlRef.current?.focus())
+          return
+        }
+      }
+      setLoginStatus('正在验证账号并建立设备会话…')
       await invoke('desktop_login', {
-        serverUrl: value.serverUrl.trim(),
-        username: value.username.trim(),
-        password: value.password,
+        ...payload,
+        switchServer: preflight.requiresReset === true,
       })
       setCredentials((current) => ({ ...current, password: '' }))
       setLoginStatus('登录成功，正在打开 Board…')

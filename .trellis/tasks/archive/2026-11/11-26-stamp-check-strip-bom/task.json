@@ -1,0 +1,34 @@
+{
+  "id": "stamp-check-strip-bom",
+  "name": "stamp-check-strip-bom",
+  "title": "stamp-check 写回时剥离报告 BOM",
+  "description": "stamp-check 重写 check-report.md 前剥离 UTF-8 BOM，避免把已有 front matter 当成正文并生成重复 front matter，导致 check_report_provenance_missing。",
+  "status": "completed",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": "2026-11-26",
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "f12b651ee0a7d10419e3aa8ef411819d539b83cc",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "commits": [
+      "f12b651ee0a7d10419e3aa8ef411819d539b83cc"
+    ],
+    "commit_set_at": "2026-11-26T11:09:05"
+  }
+}

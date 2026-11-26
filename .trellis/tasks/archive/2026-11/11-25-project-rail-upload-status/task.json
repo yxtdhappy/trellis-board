@@ -1,0 +1,53 @@
+{
+  "id": "project-rail-upload-status",
+  "name": "project-rail-upload-status",
+  "title": "项目栏上传状态与失效任务目录同步收敛",
+  "description": "修复项目栏把正常上传误显示为“等待重试上传”；清理已删除任务目录残留的游标基线，止住每 5-10 秒的无效上传告警",
+  "status": "completed",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-25",
+  "completedAt": "2026-11-26",
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "737f1f8bb8d6dfb77aa90851c7266bddabbb8661",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "commits": [
+      "737f1f8bb8d6dfb77aa90851c7266bddabbb8661"
+    ],
+    "commit_set_at": "2026-11-26T09:15:39",
+    "check_binding": {
+      "commit": "737f1f8bb8d6dfb77aa90851c7266bddabbb8661",
+      "base": "737f1f8bb8d6dfb77aa90851c7266bddabbb8661",
+      "scope": [
+        "packages/desktop/src-tauri/src/agent/device.rs",
+        "packages/desktop/src-tauri/src/agent/device/tests.rs",
+        "packages/desktop/src-tauri/src/agent/task_sync/upload.rs",
+        "packages/desktop/src-tauri/src/agent/task_sync/tests/mod.rs",
+        "packages/desktop/src-tauri/src/main/tests.rs",
+        "packages/web/src/components/layout/project-rail/association.ts",
+        "packages/web/src/components/layout/project-rail/types.ts",
+        "packages/web/src/lib/project-rail-association.js",
+        "packages/web/src/lib/project-rail-association.d.ts",
+        "packages/web/test/project-rail-association.test.js",
+        ".trellis/spec/frontend/rendering-and-state.md"
+      ],
+      "diff": "sha256:423e2b951f0fa26ef0fd19419d94d53cbc54b402cfaccc598b5a0b1e90e0d30d",
+      "report_sha256": "236b50378d88e066d219d7cafe984563d3d294471d0333f48b11554021d575f8"
+    }
+  }
+}
