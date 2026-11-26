@@ -479,6 +479,20 @@ async fn dedupes_manifest_rule_without_leading_slash() {
         std::fs::read_to_string(&path).expect("read gitignore"),
         "# Trellis shared initialization files (tracked by Board)\n!/.trellis/\n!/.trellis/**\n!/.gitignore\n!/AGENTS.md\n!/.gitattributes\n!/.agents/\n!/.agents/**\n# Trellis local state (local only)\n/.trellis/.template-hashes.json\n"
     );
+    let gitignore = std::fs::read_to_string(&path).expect("read gitignore");
+    assert_eq!(
+        gitignore
+            .lines()
+            .filter(|line| {
+                normalize_gitignore_rule(line) == normalize_gitignore_rule(TEMPLATE_HASHES_RULE)
+            })
+            .count(),
+        1
+    );
+    assert!(
+        gitignore.rfind(TEMPLATE_HASHES_RULE).expect("template rule")
+            > gitignore.rfind("!/.trellis/**").expect("shared rule")
+    );
 }
 
 #[tokio::test]
