@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "6ba7575e1ae105c36084fdca1fabbd8d381ed01d",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,6 +25,10 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "label_source": "user-explicit"
+    "label_source": "user-explicit",
+    "commits": [
+      "6ba7575e1ae105c36084fdca1fabbd8d381ed01d"
+    ],
+    "commit_set_at": "2026-11-26T13:56:05"
   }
 }
