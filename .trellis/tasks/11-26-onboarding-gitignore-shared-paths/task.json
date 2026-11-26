@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": "23360f22f4f133251bd12a50636ca40c7184da3d",
+  "commit": "f55c819f4c66a5d2eb86e739f9f559569e3b3886",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,21 +26,20 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
+    "commits": [
+      "23360f22f4f133251bd12a50636ca40c7184da3d",
+      "f55c819f4c66a5d2eb86e739f9f559569e3b3886"
+    ],
+    "commit_set_at": "2026-11-26T21:00:29",
     "check_binding": {
-      "commit": "23360f22f4f133251bd12a50636ca40c7184da3d",
-      "base": "1f3943043e0e7ef00e0a9594c50f0c6e5c3227d4",
+      "commit": "f55c819f4c66a5d2eb86e739f9f559569e3b3886",
+      "base": "d0ef9253cae91c6e5a18177cee8087c4a082aea5",
       "scope": [
         "packages/desktop/src-tauri/src/agent/onboarding.rs",
-        "packages/desktop/src-tauri/src/agent/onboarding/tests.rs",
-        ".trellis/spec/backend/desktop-agent-runtime.md",
-        ".trellis/spec/desktop/tauri-commands/index.md"
+        "packages/desktop/src-tauri/src/agent/onboarding/tests.rs"
       ],
-      "diff": "sha256:95d117a331bec1930e08a78f6eeb0e5b9acd8f32a9e5390f8e66fce0343945bb",
-      "report_sha256": "9a4769abe7768097240e8ed273a8b9dc6b5559d42ef64f6e763e84bcb0b64d1f"
-    },
-    "commits": [
-      "23360f22f4f133251bd12a50636ca40c7184da3d"
-    ],
-    "commit_set_at": "2026-11-26T19:54:37"
+      "diff": "sha256:d34e39ff19fe908c33edd635f82f44bdf478f5303564da537e071acfa7e8970b",
+      "report_sha256": "3db416e002f44362a38996903b4c9a6a8b7ac048798649ed35812d7e677d32d7"
+    }
   }
 }

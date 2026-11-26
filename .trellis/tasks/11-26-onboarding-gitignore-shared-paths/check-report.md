@@ -3,15 +3,23 @@ mode: independent
 agent: trellis-check
 session: 01a21734-5e5d-79b3-9ec9-cc2100eee8d0
 commit:
-base: 1f3943043e0e7ef00e0a9594c50f0c6e5c3227d4
-scope: packages/desktop/src-tauri/src/agent/onboarding.rs,packages/desktop/src-tauri/src/agent/onboarding/tests.rs,.trellis/spec/backend/desktop-agent-runtime.md,.trellis/spec/desktop/tauri-commands/index.md
-diff: sha256:95d117a331bec1930e08a78f6eeb0e5b9acd8f32a9e5390f8e66fce0343945bb
+base: d0ef9253cae91c6e5a18177cee8087c4a082aea5
+scope: packages/desktop/src-tauri/src/agent/onboarding.rs,packages/desktop/src-tauri/src/agent/onboarding/tests.rs
+diff: sha256:d34e39ff19fe908c33edd635f82f44bdf478f5303564da537e071acfa7e8970b
 ---
 # Quality Check Report
 
 ## Result
 
-PASS with one unexecuted environment-dependent verification.
+PASS under static review; Rust compilation/tests remain unavailable in this environment.
+
+## Incremental re-review: CI template-hash dedupe
+
+- CI failure `dedupes_manifest_rule_without_leading_slash` is addressed by treating template-hash rules as globally replaceable: every equivalent template-hash line and the managed local-state title are removed before the canonical rule is appended at the end.
+- Shared path rules use the non-replacing path, so a user-authored equivalent rule outside the managed section remains intact.
+- Shared rules are ensured before template-hash rules, therefore the canonical template-hash ignore is always after the shared unignore block.
+- Existing CRLF, no-trailing-newline, and repeated-run behavior remains compatible with the same line-splitting/newline-preserving algorithm.
+- Both scoped files pass IDE error inspection and `git diff --check`; no additional code change was required in this incremental review.
 
 ## Findings (fixed)
 
@@ -30,7 +38,7 @@ PASS with one unexecuted environment-dependent verification.
 ## Verification
 
 - `git diff --check`: pass.
-- IDE inspection of `onboarding.rs` and `onboarding/tests.rs`: no errors returned before the inspection timeout.
+- IDE inspection of `onboarding.rs` and `onboarding/tests.rs`: pass, no errors.
 - `cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml`: not executable in this environment; `cargo`, `rustc`, and `rustup` are not installed or discoverable from `PATH`.
 - No commit, push, task-state mutation, or unrelated-file edit performed.
 
