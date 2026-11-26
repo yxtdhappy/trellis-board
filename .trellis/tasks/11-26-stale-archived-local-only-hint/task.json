@@ -40,6 +40,12 @@
     "commits": [
       "5a80783a9d190e09e18c269a751620b92448654d"
     ],
-    "commit_set_at": "2026-11-26T19:31:03"
+    "commit_set_at": "2026-11-26T19:31:03",
+    "check_override": {
+      "by": "flyfly6",
+      "reason": "Owner approved after L1 unit tests and L3 real client CDP E2E",
+      "commit": "5a80783a9d190e09e18c269a751620b92448654d",
+      "at": "2026-11-26T19:31:54"
+    }
   }
 }

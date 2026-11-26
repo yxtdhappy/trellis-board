@@ -5,7 +5,7 @@ session: 4a50de73-89a3-4533-9cac-5d17dbe5dee0
 commit: ""
 base: 611673ffabb425b6361ecbb947d7fc65dde7f790
 scope: packages/server,packages/desktop
-diff: sha256:62671b71ebbf9d9f115fdd5411d31bb97c05525fa892c95318cccb26dd584b77
+diff: sha256:9a1fa43e4cf6e2a4de8fdd31751665a1f0f5b886c9da0c96c8a52578b2625cae
 ---
 # Check Report: 11-26-stale-archived-local-only-hint
 
