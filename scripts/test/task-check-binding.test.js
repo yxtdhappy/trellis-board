@@ -287,3 +287,25 @@ test('BOM and CR-only reports hash the same as canonical LF', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('stamp-check preserves front matter when the report starts with a BOM', () => {
+  const dir = makeRepo()
+  try {
+    const taskDir = createTask(dir)
+    const reportPath = path.join(taskDir, 'check-report.md')
+    const original = fs.readFileSync(reportPath, 'utf8')
+    fs.writeFileSync(reportPath, `${String.fromCharCode(0xfeff)}${original}`)
+    runTask(dir, ['stamp-check', taskDir, '--scope', 'src'])
+    const stamped = fs.readFileSync(reportPath, 'utf8')
+    assert.equal(stamped.charCodeAt(0), '-'.charCodeAt(0))
+    assert.equal(stamped.match(/^---$/gm)?.length, 2)
+    assert.match(stamped, /^mode: independent$/m)
+    assert.match(stamped, /^agent: trellis-check$/m)
+    assert.match(stamped, /^session: ses_test$/m)
+    const commit = commitWork(dir, 'feat: bom stamp')
+    runTask(dir, ['set-commit', taskDir, commit])
+    runTask(dir, ['verify', taskDir, '--strict'])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -2660,7 +2660,7 @@ def _canonical_report_bytes(data: bytes) -> bytes:
 
 def _update_report_front_matter(path: Path, updates: dict[str, str]) -> None:
     """Replace/add keys in a Markdown front-matter block, preserving the body."""
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8").lstrip(chr(0xFEFF))
     lines = text.splitlines()
     if lines and lines[0].strip() == "---":
         end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
