@@ -141,3 +141,43 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 86: 切换服务器地址时备份并清理客户端数据
+<!-- trellis-session: v=2 fp=aacdc12337c7d910 -->
+
+**Date**: 2026-11-26
+**Task**: 切换服务器地址时备份并清理客户端数据
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+桌面客户端换服务器时先确认，备份并清理旧服务器的登录/绑定数据，失败自动回滚；已发版 v0.5.14。
+
+### Main Changes
+
+- 新增 client_reset 模块：备份 client.json/agent/desktop-plugins 到 data-backup-<时间戳>（保留 3 份）、清理、恢复
+- desktop_login 增加 switchServer 强制确认，新增 desktop_login_preflight 命令与本地登录页确认弹窗
+- 登录或后续本地步骤失败时回滚旧数据；运行环境标记回写保持 ready；日志不输出绝对路径
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7fb97b5` | feat(desktop): 切换服务器地址前备份并清理本地数据 |
+| `ef0a184` | chore(release): 0.5.14 |
+
+### Testing
+
+- [OK] 新增静态契约测试 4/4；desktop 43 通过/1 跳过；web 136/136
+- [OK] tsc、oxlint、改动文件 oxfmt、desktop-ui 构建通过；Rust 由 CI cargo test 验证（本机无工具链）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 确认 v0.5.14 CI 构建与 Release 结果
+- 如需真机 E2E，按 trellis-board-e2e 验证取消/确认/备份目录
