@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "f12b651ee0a7d10419e3aa8ef411819d539b83cc",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,6 +25,10 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "label_source": "user-explicit"
+    "label_source": "user-explicit",
+    "commits": [
+      "f12b651ee0a7d10419e3aa8ef411819d539b83cc"
+    ],
+    "commit_set_at": "2026-11-26T11:09:05"
   }
 }
