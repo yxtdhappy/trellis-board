@@ -118,6 +118,90 @@ builder
     .build()?;
 ```
 
+## Scenario: 切换服务器地址前备份并清理本地数据
+
+### 1. Scope / Trigger
+
+- 修改本地登录页的登录流程、`desktop_login` / `desktop_login_preflight`，或
+  `client_reset` 备份清理逻辑时适用。
+- 触发条件：本地已有上次登录的 `server_url`，且本次地址归一化后与它不同；首次登录
+  与地址未变不触发。
+
+### 2. Signatures
+
+- `desktop_login_preflight(serverUrl: String) -> { requiresReset, previousServerUrl, backupRoot }`
+  （仅本地登录页，`allow-desktop-login-preflight`）。
+- `desktop_login(serverUrl, username, password, switchServer?: bool)`；`switchServer` 缺省为
+  `false`。
+- 清理清单（相对 data 目录，固定三项）：`client.json`、`agent`、`desktop-plugins`。
+- 备份目录：data 同级 `data-backup-<yyyyMMdd-HHmmss>`，保留最近 3 份。
+
+### 3. Contracts
+
+- 地址比较必须复用 `navigation::validate_board_url` + `navigation::board_server_url`，前端不得
+  自行实现归一化；尾部 `/`、主机大小写、默认端口的差异不算切换。
+- `desktop_login` 在地址变化且 `switchServer != Some(true)` 时必须直接返回错误，不做清理也不登录；
+  preflight 只是交互提示，不能作为唯一防线。
+- 顺序固定为「备份 → 删除 → 登录」；备份失败中止登录且不删除任何数据。
+- 切换分支必须先 `agent_service::stop` 与 `plugin_host::stop`（插件宿主占用 `desktop-plugins/`）。
+- 登录失败、或登录成功后任一本地步骤（令牌校验、写会话 Cookie、写 `client.json`）失败，
+  都必须用备份恢复被删项并保留备份目录；恢复失败要记录原因，错误文案给出备份目录名
+  （按 `desktop-agent-runtime` §4，日志与错误消息不输出绝对路径）。
+- 不得删除 `runtime/`、`npm-global/`、`updates/`、`plugins/`、`appearance.json`、`logs/`
+  与 `update-state.json`。
+- 清理会删除 `client.json`，但运行环境标记（`node_runtime` / `trellis_runtime` / `python_runtime`）
+  必须用切换前读到的配置回写，避免下次启动重新下载 Node/Trellis。
+- 新命令与权限只进入 `capabilities/main.json`，不得进入 `board-local-association.json`。
+- 登录页取消确认时不得调用 `desktop_login`、不得改动任何本地文件。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+| --- | --- |
+| 首次登录（无 `server_url`） | 不弹确认，直接登录 |
+| 地址仅尾斜杠/大小写/默认端口不同 | 不弹确认，直接登录 |
+| 地址变化且用户取消 | 停在登录页，零副作用 |
+| 地址变化但未带 `switchServer` | 返回错误，不清理 |
+| 备份目录不可写 | 中止登录，原数据完整，返回备份失败错误 |
+| 删除项被占用 | 重试 5 次后恢复已删项并报错 |
+| 清理后登录失败 | 从备份恢复，错误文案追加「已恢复原服务器的本地数据」 |
+| 恢复也失败 | 错误文案给出备份目录，日志记录原因 |
+| 远程 Board 调用 preflight | capability 未授权，命令不可用 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：旧地址 `https://a.example.com`，新地址 `https://b.example.com`，确认后生成
+  `data-backup-20261126-153000`，旧三个清理项被移除，`runtime/` 保留，`runtime_status` 仍 ready。
+- Base：用户改地址后在确认框取消，登录页保留已输入的账号密码，改回旧地址可直接登录。
+- Bad：为省事在 `desktop_login` 里无条件清理，或把 `runtime/` 一并删除导致重新下载 Node。
+
+### 6. Tests Required
+
+- Rust：`client_reset` 覆盖归一化比较、备份/清理范围、缺失项跳过、恢复、保留 3 份、备份失败
+  （Windows 独占句柄）。
+- 静态契约：`capabilities/main.json` 含 `allow-desktop-login-preflight` 且 Board capability 不含；
+  `LoginApp` 在 `desktop_login` 之前调用 preflight 且取消路径不登录。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// 只靠前端 preflight 决定是否清库：漏调或旧包会静默删数据。
+if previous.server_url != server_url {
+    client_reset::backup_and_clear(&config::data_dir(), chrono::Local::now())?;
+}
+```
+
+#### Correct
+
+```rust
+let switched = client_reset::server_switched(previous_server.as_deref(), &server_url)?;
+if switched && switch_server != Some(true) {
+    return Err("服务器地址已变更，需要先在登录页确认清理旧服务器的本地数据".to_string());
+}
+```
+
 ## Scenario: 远程 Board 读取只读客户端身份
 
 ### 1. Scope / Trigger

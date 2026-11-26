@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/desktop/tauri-commands/index.md", "reason": "desktop_login / desktop_logout 的命令契约、capability 分离与本地登录页导航规则"}
+{"file": ".trellis/spec/backend/desktop-agent-runtime.md", "reason": "agent 数据目录（凭证、绑定、游标）结构与启停时机"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "登录页 UI 与确认弹窗的前端约定"}
+{"file": ".trellis/spec/guides/index.md", "reason": "通用开发与验证约定"}

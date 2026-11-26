@@ -6,6 +6,7 @@
 mod agent;
 mod agent_service;
 mod appearance;
+mod client_reset;
 mod config;
 mod kit_assets;
 mod logging;
@@ -73,6 +74,56 @@ struct DesktopLoginResult {
     username: String,
     must_change_password: bool,
     device_ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginPreflight {
+    requires_reset: bool,
+    previous_server_url: Option<String>,
+    backup_root: String,
+}
+
+/// 日志与错误消息不输出绝对路径（见 desktop-agent-runtime spec §4），只给备份目录名。
+fn backup_label(outcome: &client_reset::ResetOutcome) -> String {
+    outcome
+        .backup_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "data-backup".to_string())
+}
+
+/// 切换服务器后任何本地步骤失败都把旧数据还回去，避免用户两边都登不上。
+fn rollback_server_switch(
+    reset: Option<&client_reset::ResetOutcome>,
+    error: String,
+) -> String {
+    let Some(outcome) = reset else {
+        return error;
+    };
+    logging::warn(&format!("切换服务器后本地步骤失败，尝试恢复原数据：{error}"));
+    match client_reset::restore(outcome) {
+        Ok(()) => format!("{error}（已恢复原服务器的本地数据）"),
+        Err(restore_error) => {
+            logging::warn(&format!(
+                "恢复原服务器数据失败：{restore_error}；备份目录 {}",
+                backup_label(outcome)
+            ));
+            format!(
+                "{error}；恢复原数据失败：{restore_error}，可从备份目录 {}（位于客户端数据目录同级）手工恢复",
+                backup_label(outcome)
+            )
+        }
+    }
+}
+
+/// 上次登录保存的服务器地址；空白值按首次登录处理。
+fn saved_server_url() -> Option<String> {
+    config::load()
+        .ok()
+        .flatten()
+        .map(|value| value.server_url.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn ensure_local_caller(window: &WebviewWindow) -> Result<(), String> {
@@ -421,6 +472,25 @@ async fn runtime_install(
     runtime_commands::runtime_install(app).await
 }
 
+/// 登录前检查：地址变了要先让用户在登录页确认清理旧服务器的本地数据。
+#[tauri::command]
+async fn desktop_login_preflight(
+    window: WebviewWindow,
+    server_url: String,
+) -> Result<LoginPreflight, String> {
+    ensure_local_caller(&window)?;
+    let board = navigation::validate_board_url(&server_url)?;
+    let normalized = navigation::board_server_url(&board);
+    let previous = saved_server_url();
+    Ok(LoginPreflight {
+        requires_reset: client_reset::server_switched(previous.as_deref(), &normalized)?,
+        previous_server_url: previous,
+        backup_root: client_reset::backup_root(&config::data_dir())
+            .display()
+            .to_string(),
+    })
+}
+
 #[tauri::command]
 async fn desktop_login(
     app: AppHandle,
@@ -428,22 +498,35 @@ async fn desktop_login(
     server_url: String,
     username: String,
     password: String,
+    switch_server: Option<bool>,
 ) -> Result<DesktopLoginResult, String> {
     ensure_local_caller(&window)?;
     let board = navigation::validate_board_url(&server_url)?;
     let remembered_username = username.trim().to_string();
     let username = validate_username(&remembered_username)?;
     validate_password(&password)?;
-    // 登录页出现时旧会话已结束，先停止旧账号的后台同步，成功后再按新配置重启。
-    agent_service::stop(&app);
     let server_url = navigation::board_server_url(&board);
     let previous = config::load().unwrap_or(None);
-    let force_new = previous
-        .as_ref()
-        .map(|value| value.server_url != server_url)
-        .unwrap_or(true);
+    let previous_server = previous.as_ref().map(|value| value.server_url.clone());
+    let switched = client_reset::server_switched(previous_server.as_deref(), &server_url)?;
+    // 前端必须先弹确认；缺这个显式标记时不清理，也不登录，避免静默清库。
+    if switched && switch_server != Some(true) {
+        return Err("服务器地址已变更，需要先在登录页确认清理旧服务器的本地数据".to_string());
+    }
+    // 登录页出现时旧会话已结束，先停止旧账号的后台同步，成功后再按新配置重启。
+    agent_service::stop(&app);
+    let mut reset = None;
+    if switched {
+        // 插件宿主会占用 desktop-plugins/，不停掉会让删除失败。
+        plugin_host::stop(&app).await;
+        reset = Some(client_reset::backup_and_clear(
+            &config::data_dir(),
+            chrono::Local::now(),
+        )?);
+    }
+    let force_new = previous_server.as_deref() != Some(server_url.as_str());
     let device_name = default_device_name();
-    let summary = agent_service::login(
+    let summary = match agent_service::login(
         &app,
         &server_url,
         &username,
@@ -451,18 +534,28 @@ async fn desktop_login(
         &device_name,
         force_new,
     )
-    .await?;
-    let token = validate_session_token(
+    .await
+    {
+        Ok(summary) => summary,
+        Err(error) => return Err(rollback_server_switch(reset.as_ref(), error)),
+    };
+    // 登录已经成功，但本地还有几步写操作；任何一步失败同样回滚，避免留下半套状态。
+    let token = match validate_session_token(
         summary
             .session_token
             .as_deref()
             .ok_or_else(|| "登录结果缺少会话令牌".to_string())?,
-    )?;
+    ) {
+        Ok(token) => token,
+        Err(error) => return Err(rollback_server_switch(reset.as_ref(), error)),
+    };
     if let Err(error) = write_session_cookie(&window, &board, &token) {
         let _ = agent_service::logout(&app, &server_url, &token).await;
-        return Err(error);
+        return Err(rollback_server_switch(reset.as_ref(), error));
     }
-    let previous_config = config::load().ok().flatten();
+    // 切换服务器会删掉 client.json；运行环境标记必须沿用切换前读到的值，
+    // 否则下次启动会重新探测 Node/Trellis，最坏触发重新下载。
+    let previous_config = config::load().ok().flatten().or(previous);
     if let Err(error) = config::save(&config::ClientConfig {
         schema_version: config::SCHEMA_VERSION,
         server_url: server_url.clone(),
@@ -480,7 +573,16 @@ async fn desktop_login(
     }) {
         let _ = delete_session_cookie(&window, &board);
         let _ = agent_service::logout(&app, &server_url, &token).await;
-        return Err(error);
+        return Err(rollback_server_switch(reset.as_ref(), error));
+    }
+    if reset.is_some() {
+        let pruned = client_reset::prune_backups(
+            &client_reset::backup_root(&config::data_dir()),
+            client_reset::KEEP_BACKUPS,
+        );
+        if !pruned.is_empty() {
+            logging::info(&format!("已清理 {} 份过期客户端备份", pruned.len()));
+        }
     }
     let state = app.state::<DesktopAuthState>();
     let auth = state.inner().clone();
@@ -1149,6 +1251,7 @@ fn main() {
             client_identity,
             desktop_logout,
             desktop_login,
+            desktop_login_preflight,
             appearance_load,
             appearance_save,
             pick_local_project_folder,

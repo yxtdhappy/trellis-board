@@ -31,6 +31,11 @@ description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]
 
 [[permission]]
+identifier = "allow-desktop-login-preflight"
+description = "仅本地登录页在提交登录前检查服务器地址是否变更、是否需要清理旧服务器数据。"
+commands.allow = ["desktop_login_preflight"]
+
+[[permission]]
 identifier = "allow-desktop-logout"
 description = "当前 Board origin 可退出桌面登录并返回本地登录页。"
 commands.allow = ["desktop_logout"]
