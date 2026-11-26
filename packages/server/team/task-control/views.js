@@ -74,15 +74,26 @@ export function createViews({ statements, now = () => new Date() }) {
     )
   }
 
+  function isArchivedTaskDir(taskSpaceId, taskDir) {
+    const basename =
+      String(taskDir || '')
+        .split('/')
+        .filter(Boolean)
+        .pop() || ''
+    if (!basename) return false
+    const pattern = `.trellis/tasks/archive/%/${basename.replace(/[\\%_]/g, (ch) => `\\${ch}`)}`
+    return Boolean(
+      statements.readArchivedTaskByBasename.get(taskSpaceId, pattern) ||
+      statements.readArchivedFileByBasename.get(taskSpaceId, pattern),
+    )
+  }
+
   function assertReadable(agent, taskSpaceId, taskDir) {
     assertAgentAccess(agent, taskSpaceId)
     const row = statements.readTaskByDir.get(taskSpaceId, taskDir)
     if (!row) {
-      const basename = taskDir.split('/').filter(Boolean).pop() || ''
-      if (basename) {
-        const pattern = `.trellis/tasks/archive/%/${basename.replace(/[\\%_]/g, (ch) => `\\${ch}`)}`
-        const archived = statements.readArchivedTaskByBasename.get(taskSpaceId, pattern)
-        if (archived) throw teamError(409, 'TASK_ARCHIVED', '任务已归档')
+      if (isArchivedTaskDir(taskSpaceId, taskDir)) {
+        throw teamError(409, 'TASK_ARCHIVED', '任务已归档')
       }
       const legacy = statements.readLegacyTaskFile.get(taskSpaceId, taskDir)
       if (legacy) throw teamError(403, ERROR_CODES.FORBIDDEN, '只能读取本人任务内容')
@@ -175,6 +186,7 @@ export function createViews({ statements, now = () => new Date() }) {
     publicTask,
     publicLease,
     visibleTaskIds,
+    isArchivedTaskDir,
     assertReadable,
     controlsForAgent,
     pendingTasks,

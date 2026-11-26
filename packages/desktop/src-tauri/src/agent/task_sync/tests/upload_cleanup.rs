@@ -48,7 +48,7 @@ fn prunes_only_empty_remote_absent_local_directories_with_baselines() {
     let local = HashSet::from([alive.to_string()]);
 
     assert_eq!(
-        prunable_task_directories(&entries, &baselines, &local),
+        prunable_task_directories(&entries, &baselines, &BTreeMap::new(), &local),
         vec![dead.to_string()]
     );
 }
@@ -60,13 +60,16 @@ fn keeps_baselines_while_local_directory_exists_or_server_has_live_files() {
     let entries = vec![entry(dead, Vec::new())];
     let local = HashSet::from([dead.to_string()]);
 
-    assert!(prunable_task_directories(&entries, &baselines, &local).is_empty());
+    assert!(prunable_task_directories(&entries, &baselines, &BTreeMap::new(), &local).is_empty());
 
     let entries = vec![entry(
         dead,
         vec![snapshot_file(&format!("{dead}/task.json"), dead)],
     )];
-    assert!(prunable_task_directories(&entries, &baselines, &HashSet::new()).is_empty());
+    assert!(
+        prunable_task_directories(&entries, &baselines, &BTreeMap::new(), &HashSet::new())
+            .is_empty()
+    );
 }
 
 #[test]
@@ -78,7 +81,10 @@ fn does_not_match_baselines_from_a_longer_directory_name() {
     )]);
     let entries = vec![entry(dir, Vec::new())];
 
-    assert!(prunable_task_directories(&entries, &baselines, &HashSet::new()).is_empty());
+    assert!(
+        prunable_task_directories(&entries, &baselines, &BTreeMap::new(), &HashSet::new())
+            .is_empty()
+    );
 }
 
 #[test]
@@ -88,7 +94,29 @@ fn deduplicates_entries_for_the_same_directory() {
     let entries = vec![entry(dir, Vec::new()), entry(dir, Vec::new())];
 
     assert_eq!(
-        prunable_task_directories(&entries, &baselines, &HashSet::new()),
+        prunable_task_directories(&entries, &baselines, &BTreeMap::new(), &HashSet::new()),
         vec![dir.to_string()]
     );
+}
+
+#[test]
+fn prunes_absent_local_deferred_directory_without_baselines() {
+    let dir = ".trellis/tasks/11-22-stale-archived";
+    let deferred = BTreeMap::from([(
+        dir.to_string(),
+        BTreeMap::from([(format!("{dir}/task.json"), "sha".to_string())]),
+    )]);
+    let entries = vec![entry(dir, Vec::new())];
+
+    assert_eq!(
+        prunable_task_directories(&entries, &BTreeMap::new(), &deferred, &HashSet::new()),
+        vec![dir.to_string()]
+    );
+    assert!(prunable_task_directories(
+        &entries,
+        &BTreeMap::new(),
+        &deferred,
+        &HashSet::from([dir.to_string()]),
+    )
+    .is_empty());
 }

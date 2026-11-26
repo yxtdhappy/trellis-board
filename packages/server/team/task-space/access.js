@@ -364,6 +364,13 @@ export function createAccess({ db, statements, view, allowFileRemote, now = () =
         if (base) archivedBasenameSet.add(base)
       }
     }
+    for (const row of statements.preflightArchivedDirs.all(resolved.taskSpace.id)) {
+      const dir = String(row.task_dir || '').trim()
+      if (!dir) continue
+      hiddenTaskDirSet.add(dir)
+      const base = dir.split('/').filter(Boolean).pop()
+      if (base) archivedBasenameSet.add(base)
+    }
     for (const row of statements.preflightLegacyTaskDirs.all(resolved.taskSpace.id)) {
       const dir = String(row.task_dir || '').trim()
       if (dir) hiddenTaskDirSet.add(dir)

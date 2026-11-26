@@ -1305,6 +1305,87 @@ test('预检仅返回当前用户未归档活跃任务并列出隐藏目录与�
   }
 })
 
+test('preflight 将仅存在于 sync_archive_file 活跃快照中的归档任务纳入 archivedTaskBasenames', () => {
+  const { db, service } = setup()
+  try {
+    const attached = service.attach('user-a', 'agent-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      displayName: 'Acme',
+      teamId: 'team-a',
+      developerId: 'dev-a',
+      localRepoKey: 'a'.repeat(64),
+    })
+    const taskSpaceId = attached.taskSpace.id
+    const now = new Date().toISOString()
+
+    db.prepare(`
+      INSERT INTO sync_archive_snapshot(
+        id, task_space_id, source_head, status, active, storage_root,
+        file_count, byte_count, manifest_sha256, published_at
+      ) VALUES
+        (?, ?, ?, 'retired', 0, 'snap-old', 1, 10, ?, ?),
+        (?, ?, ?, 'published', 1, 'snap-active', 1, 10, ?, ?)
+    `).run(
+      'snap-old',
+      taskSpaceId,
+      '1'.repeat(40),
+      'c'.repeat(64),
+      now,
+      'snap-active',
+      taskSpaceId,
+      '2'.repeat(40),
+      'd'.repeat(64),
+      now,
+    )
+    db.prepare('UPDATE sync_task_space SET archive_snapshot_id = ? WHERE id = ?').run(
+      'snap-active',
+      taskSpaceId,
+    )
+
+    const insertArchiveFile = db.prepare(`
+      INSERT INTO sync_archive_file(
+        id, task_space_id, snapshot_id, relative_path, blob_oid, sha256, content_text,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    insertArchiveFile.run(
+      'af-active',
+      taskSpaceId,
+      'snap-active',
+      '.trellis/tasks/archive/2026-11/11-21-git-archived/task.json',
+      '1'.repeat(40),
+      'a'.repeat(64),
+      JSON.stringify({ id: 'git-archived', title: 'Git归档任务' }),
+      'git-archived',
+      '.trellis/tasks/archive/2026-11/11-21-git-archived',
+      now,
+    )
+    insertArchiveFile.run(
+      'af-stale',
+      taskSpaceId,
+      'snap-old',
+      '.trellis/tasks/archive/2026-11/11-10-stale-snap/task.json',
+      '2'.repeat(40),
+      'b'.repeat(64),
+      JSON.stringify({ id: 'stale-snap', title: '旧快照任务' }),
+      'stale-snap',
+      '.trellis/tasks/archive/2026-11/11-10-stale-snap',
+      now,
+    )
+
+    const result = service.preflight('user-a', {
+      remoteUrl: 'https://example.com/acme/repo.git',
+      branchName: 'main',
+      teamId: 'team-a',
+    })
+    assert.deepEqual(result.archivedTaskBasenames, ['11-21-git-archived'])
+    assert.deepEqual(result.hiddenTaskDirs, ['.trellis/tasks/archive/2026-11/11-21-git-archived'])
+  } finally {
+    db.close()
+  }
+})
+
 test('preflight 排除同用户其他设备持有有效活跃租约的任务并保留本机与过期租约任务', () => {
   const { db, service } = setup()
   try {

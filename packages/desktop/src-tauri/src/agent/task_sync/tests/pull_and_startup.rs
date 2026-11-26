@@ -731,6 +731,24 @@ fn missing_local_directory_keeps_deferred_protected() {
 }
 
 #[test]
+fn missing_local_only_deferred_directory_is_cleared_without_dirty() {
+    let task_dir = ".trellis/tasks/11-22-stale-archived";
+    let task_json = format!("{task_dir}/task.json");
+    let deferred_state = BTreeMap::from([(task_json, snapshot_sha256("{\"id\":\"task-a\"}\n"))]);
+    let cursor = Cursor {
+        deferred: BTreeMap::from([(task_dir.to_string(), deferred_state)]),
+        ..Default::default()
+    };
+
+    let (dirty, deferred, reconciled) =
+        local_sync_state_from_groups(&cursor, &[], &BTreeMap::new());
+
+    assert!(dirty.is_empty());
+    assert!(deferred.is_empty());
+    assert!(reconciled.is_empty());
+}
+
+#[test]
 fn changed_deferred_state_still_uses_cursor_baseline_for_dirty() {
     let task_dir = ".trellis/tasks/task-a";
     let task_json = format!("{task_dir}/task.json");

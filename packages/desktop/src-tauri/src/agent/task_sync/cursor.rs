@@ -89,6 +89,15 @@ pub(super) fn local_sync_state_from_groups(
         // cursor 基线只判 dirty；只有合并服务端基线完全一致时才记录为精确收敛。
         if let Some(deferred_state) = cursor.deferred.get(&task_dir) {
             if local_state.is_empty() {
+                let has_server_baseline = server_baselines
+                    .get(task_dir.as_str())
+                    .is_some_and(|baseline| !baseline.is_empty());
+                let has_cursor_baseline = cursor_baselines
+                    .get(task_dir.as_str())
+                    .is_some_and(|baseline| !baseline.is_empty());
+                if !has_server_baseline && !has_cursor_baseline {
+                    next_deferred.remove(&task_dir);
+                }
                 continue;
             }
             if deferred_state == &local_state {

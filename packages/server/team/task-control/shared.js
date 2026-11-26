@@ -329,6 +329,21 @@ export function createStatements(db) {
       WHERE task_space_id = ? AND archived = 1 AND relative_dir LIKE ? ESCAPE '\\'
       LIMIT 1
     `),
+    readArchivedFileByBasename: db.prepare(`
+      SELECT 1
+      FROM sync_archive_file f
+      JOIN sync_task_space s ON s.id = f.task_space_id
+      WHERE f.task_space_id = ?
+        AND (
+          f.snapshot_id = COALESCE(s.archive_candidate_snapshot_id, s.archive_snapshot_id)
+          OR (
+            COALESCE(s.archive_candidate_snapshot_id, s.archive_snapshot_id) IS NULL
+            AND f.snapshot_id IS NULL
+          )
+        )
+        AND f.task_dir LIKE ? ESCAPE '\\'
+      LIMIT 1
+    `),
     readLegacyTaskFile: db.prepare(`
       SELECT 1 FROM sync_task_space_file
       WHERE task_space_id = ? AND task_dir = ? AND deleted = 0

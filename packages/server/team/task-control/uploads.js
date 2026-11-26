@@ -56,6 +56,15 @@ export function createUploads({ statements, views, leases, tasks, now = () => ne
       complete.taskId == null ? null : canonicalKey(taskSpaceId, complete.taskId)
     const row = executionTaskKey ? statements.readTask.get(executionTaskKey) : null
     if (!row) {
+      if (complete.taskDir && views.isArchivedTaskDir(taskSpaceId, complete.taskDir)) {
+        throw teamError(409, 'TASK_ARCHIVED', '任务已归档，拒绝旧客户端重新写回', {
+          details: {
+            executionTaskKey,
+            taskId: complete.taskId,
+            taskDir: complete.taskDir,
+          },
+        })
+      }
       assertNewTaskOwnedByUploader({ agent, taskSpaceId, complete, context })
       return { task: null, lease: null }
     }

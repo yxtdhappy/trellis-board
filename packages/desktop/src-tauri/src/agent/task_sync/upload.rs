@@ -193,14 +193,17 @@ impl TaskSync {
         // 又生成空 diff 而无法收敛。只对本次实际抓取过的目录判定，避免误伤未请求的目录。
         let mut existing_local_dirs = HashSet::new();
         for (task_dir, _local, server_files) in &entries {
-            if server_files.is_empty()
-                && self.active_task_directory_exists(binding, task_dir).await
+            if server_files.is_empty() && self.active_task_directory_exists(binding, task_dir).await
             {
                 existing_local_dirs.insert(task_dir.clone());
             }
         }
-        let mut cleared_dirs =
-            prunable_task_directories(&entries, &cursor.baselines, &existing_local_dirs);
+        let mut cleared_dirs = prunable_task_directories(
+            &entries,
+            &cursor.baselines,
+            &cursor.deferred,
+            &existing_local_dirs,
+        );
         for task_dir in &archived_dirs {
             self.cleanup_archived_residue(binding, task_dir).await;
             // 本地活跃副本已不存在（归档移出后的常态，或残留已被安全清理）才丢弃同步基线；
@@ -1034,6 +1037,7 @@ pub(super) fn pending_task_dirs(files: &[Value]) -> HashSet<String> {
 pub(super) fn prunable_task_directories(
     entries: &[(String, Option<SnapshotGroup>, Vec<SnapshotFile>)],
     baselines: &BTreeMap<String, String>,
+    deferred: &BTreeMap<String, BTreeMap<String, String>>,
     existing_local_dirs: &HashSet<String>,
 ) -> Vec<String> {
     let mut dirs: Vec<String> = entries
@@ -1041,6 +1045,9 @@ pub(super) fn prunable_task_directories(
         .filter(|(task_dir, _, server_files)| {
             if !server_files.is_empty() || existing_local_dirs.contains(task_dir) {
                 return false;
+            }
+            if deferred.contains_key(task_dir) {
+                return true;
             }
             let prefix = format!("{task_dir}/");
             baselines

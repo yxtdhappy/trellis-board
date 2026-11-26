@@ -567,7 +567,9 @@ test('handoff ACK 轮次匹配才推进，完成终态重复 ACK 元数据不一
       'task-handoff-cycle-match',
     )
     const row = db
-      .prepare('SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?')
+      .prepare(
+        'SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?',
+      )
       .get(executionTaskKey)
     const ack = {
       outcome: 'cleaned',
@@ -634,7 +636,9 @@ test('handoff ACK 轮次匹配才推进，完成终态重复 ACK 元数据不一
     )
     assert.equal(
       db
-        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
         .get().count,
       2,
     )
@@ -654,7 +658,9 @@ test('陈旧轮次的 cleaned/conflict ACK 返回 HANDOFF_CYCLE_STALE 且不推�
       'task-handoff-cycle-stale',
     )
     const previous = db
-      .prepare('SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?')
+      .prepare(
+        'SELECT materialized_at, materialized_revision FROM sync_task WHERE execution_task_key = ?',
+      )
       .get(executionTaskKey)
     const nextAt = '2099-02-02T02:02:02.022Z'
     db.prepare(`
@@ -715,7 +721,9 @@ test('陈旧轮次的 cleaned/conflict ACK 返回 HANDOFF_CYCLE_STALE 且不推�
     )
     assert.equal(
       db
-        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
         .get().count,
       0,
     )
@@ -731,7 +739,9 @@ test('陈旧轮次的 cleaned/conflict ACK 返回 HANDOFF_CYCLE_STALE 且不推�
     assert.equal(conflict.handoffState, 'source_cleanup_conflict')
     assert.equal(
       db
-        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
         .get().count,
       1,
     )
@@ -1117,7 +1127,9 @@ test('非法 handoff 轮次字段返回 400 且不改状态', () => {
     )
     assert.equal(
       db
-        .prepare("SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'")
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE action = 'task_handoff_cleanup_ack'",
+        )
         .get().count,
       0,
     )
@@ -1504,6 +1516,113 @@ test('归档任务的活跃路径按 basename 反解返回 409，未知目录仍
     assert.throws(
       () => snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-17-legacy'),
       (error) => error.status === 403 && error.message === '只能读取本人任务内容',
+    )
+  } finally {
+    db.close()
+  }
+})
+
+test('仅存在于 sync_archive_file 活跃快照的归档任务在读取与上传时返回 409', () => {
+  const { db, taskControl, snapshots, agentA, taskSpaceId } = setup()
+  try {
+    const now = new Date().toISOString()
+    db.prepare(`
+      INSERT INTO sync_archive_snapshot(
+        id, task_space_id, source_head, status, active, storage_root,
+        file_count, byte_count, manifest_sha256, published_at
+      ) VALUES
+        (?, ?, ?, 'retired', 0, 'snap-old', 1, 10, ?, ?),
+        (?, ?, ?, 'published', 1, 'snap-active', 1, 10, ?, ?)
+    `).run(
+      'snap-old',
+      taskSpaceId,
+      '1'.repeat(40),
+      'c'.repeat(64),
+      now,
+      'snap-active',
+      taskSpaceId,
+      '2'.repeat(40),
+      'd'.repeat(64),
+      now,
+    )
+    db.prepare('UPDATE sync_task_space SET archive_snapshot_id = ? WHERE id = ?').run(
+      'snap-active',
+      taskSpaceId,
+    )
+    const insertArchiveFile = db.prepare(`
+      INSERT INTO sync_archive_file(
+        id, task_space_id, snapshot_id, relative_path, blob_oid, sha256, content_text,
+        task_id, task_dir, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    insertArchiveFile.run(
+      'af-1',
+      taskSpaceId,
+      'snap-active',
+      '.trellis/tasks/archive/2026-11/11-22-git-archived/task.json',
+      '1'.repeat(40),
+      'a'.repeat(64),
+      JSON.stringify({ id: 'git-archived', title: 'Git 归档任务' }),
+      'git-archived',
+      '.trellis/tasks/archive/2026-11/11-22-git-archived',
+      now,
+    )
+    insertArchiveFile.run(
+      'af-old',
+      taskSpaceId,
+      'snap-old',
+      '.trellis/tasks/archive/2026-11/11-11-old-snap/task.json',
+      '2'.repeat(40),
+      'b'.repeat(64),
+      JSON.stringify({ id: 'old-snap', title: '已淘汰快照任务' }),
+      'old-snap',
+      '.trellis/tasks/archive/2026-11/11-11-old-snap',
+      now,
+    )
+
+    assert.throws(
+      () => snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-22-git-archived'),
+      (error) => error.status === 409 && error.code === 'TASK_ARCHIVED',
+    )
+    assert.throws(
+      () => snapshots.directorySnapshot(agentA, taskSpaceId, '.trellis/tasks/11-11-old-snap'),
+      (error) => error.status === 404 && error.code === 'NOT_FOUND',
+    )
+
+    const content = JSON.stringify({
+      id: 'git-archived',
+      title: '滞后分支旧任务',
+      assignee: 'dev-a',
+      branch: 'main',
+    })
+    assert.throws(
+      () =>
+        taskControl.assertUploadAllowed(
+          agentA,
+          taskSpaceId,
+          { taskId: 'git-archived', taskDir: '.trellis/tasks/11-22-git-archived' },
+          {},
+          { files: [{ path: '.trellis/tasks/11-22-git-archived/task.json', content }] },
+        ),
+      (error) => error.status === 409 && error.code === 'TASK_ARCHIVED',
+    )
+    assert.throws(
+      () =>
+        snapshots.applyChanges(agentA, taskSpaceId, {
+          batchId: 'batch-stale-archived-1',
+          clientSequence: 1,
+          files: [
+            {
+              path: '.trellis/tasks/11-22-git-archived/task.json',
+              content,
+              sha256: snapshotSha256(content),
+              baseSha256: null,
+            },
+          ],
+        }),
+      (error) =>
+        error.status === 409 &&
+        (error.code === 'TASK_ARCHIVED' || error.code === 'ARCHIVE_SYNC_SERVER_MANAGED'),
     )
   } finally {
     db.close()

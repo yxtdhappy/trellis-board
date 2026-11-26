@@ -140,6 +140,19 @@ const STATEMENTS = {
     WHERE task_space_id = ?
       AND (archived = 1 OR assignee_user_id IS NULL OR assignee_user_id <> ?)
   `,
+  preflightArchivedDirs: `
+    SELECT DISTINCT f.task_dir
+    FROM sync_archive_file f
+    JOIN sync_task_space s ON s.id = f.task_space_id
+    WHERE f.task_space_id = ?
+      AND (
+        f.snapshot_id = COALESCE(s.archive_candidate_snapshot_id, s.archive_snapshot_id)
+        OR (
+          COALESCE(s.archive_candidate_snapshot_id, s.archive_snapshot_id) IS NULL
+          AND f.snapshot_id IS NULL
+        )
+      )
+  `,
   preflightLegacyTaskDirs: `
     SELECT DISTINCT f.task_dir
     FROM sync_task_space_file f
