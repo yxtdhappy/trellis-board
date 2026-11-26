@@ -94,3 +94,26 @@ check-report 绑定哈希改为 LF 规范化字节，兼容旧原始哈希；sta
 ### Status
 
 [OK] **Completed**
+
+
+## Session 84: stamp-check 写回时剥离报告 BOM
+<!-- trellis-session: v=2 fp=4804fabb40e98bd3 -->
+
+**Date**: 2026-11-26
+**Task**: stamp-check 写回时剥离报告 BOM
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f12b651` | fix(trellis): stamp-check 写回前剥离报告 BOM |
+
+### Status
+
+[OK] **Completed**

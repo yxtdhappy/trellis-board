@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 83
+- **Total Sessions**: 84
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~96 | Active |
+| `journal-2.md` | ~119 | Active |
 | `journal-1.md` | ~1963 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 84 | 2026-11-26 | stamp-check 写回时剥离报告 BOM | `f12b651` | `main` |
 | 83 | 2026-11-26 | 项目栏已关联分支重新绑定 | `2fb4907`, `2fd7b57` | `main` |
 | 82 | 2026-11-26 | check 报告绑定改用 LF 规范化哈希 | `8d183b8` | `main` |
 | 81 | 2026-11-26 | 公司开发规范初始化与生命周期 | `51c55a0`, `f7d0d73`, `44dd7ca` | `main` |
