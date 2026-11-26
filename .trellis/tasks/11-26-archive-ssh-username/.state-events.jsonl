@@ -1,0 +1,4 @@
+{"actor": "yhj", "at": "2026-11-26T06:04:41+00:00", "event": "work_type_set", "from": "planning", "from_value": "backend", "schemaVersion": 1, "to": "planning", "work_type": "fullstack"}
+{"actor": "yhj", "at": "2026-11-26T06:04:49+00:00", "event": "task_type_set", "from": "planning", "from_value": null, "schemaVersion": 1, "task_type": "complex", "to": "planning"}
+{"actor": "yhj", "at": "2026-11-26T06:07:39+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}
+{"actor": null, "at": "2026-11-26T06:07:39+00:00", "event": "state_committed", "from": "in_progress", "reason": "task.py start --commit-state", "schemaVersion": 1, "to": "in_progress"}
