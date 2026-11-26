@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "45966b16e43e09570d0c3bc3ce71a94175281edf",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -36,6 +36,21 @@
         "at": "2026-11-26T18:16:36"
       }
     ],
-    "frontend_evidence_at": "2026-11-26T18:16:36"
+    "frontend_evidence_at": "2026-11-26T18:16:36",
+    "check_binding": {
+      "commit": "45966b16e43e09570d0c3bc3ce71a94175281edf",
+      "base": "fbc609b1c544e59de626176ea59a08ce2d10866b",
+      "scope": [
+        "packages/web/src/api/admin/members.ts",
+        "packages/web/src/features/admin/ProjectsTab.tsx",
+        ".trellis/spec/frontend/rendering-and-state.md"
+      ],
+      "diff": "sha256:4ed99c6a9793ea15055534e07d1dc765889155766f24225045796e9209ff4d54",
+      "report_sha256": "25f50685007370bea6ca37fa074ab354faf8c2c631a717972eaeb3acb3aba34d"
+    },
+    "commits": [
+      "45966b16e43e09570d0c3bc3ce71a94175281edf"
+    ],
+    "commit_set_at": "2026-11-26T20:05:32"
   }
 }
