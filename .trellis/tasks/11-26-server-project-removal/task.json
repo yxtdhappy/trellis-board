@@ -1,0 +1,31 @@
+{
+  "id": "server-project-removal",
+  "name": "server-project-removal",
+  "title": "服务端支持移除项目",
+  "description": "为管理员提供永久移除项目及清理服务端关联数据的接口",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-26T17:22:19"
+  }
+}
