@@ -30,6 +30,14 @@
 - Isolated temporary data directory and generated admin password removed.
 - No production data, credentials, or container configuration were modified.
 
+## Production Follow-up
+
+- Jenkins `#9-6008968a` completed successfully at 2026-11-26 14:51 +08:00.
+- Production admin page showed the new SSH username field with default `git`.
+- Existing `wit-ci` credential test returned `200` with the expected task space and `branchFound=true`.
+- `mdp-backend-service`, `mdp-backend-web`, and `mdp-report-service` all showed successful archive sync after redeployment.
+- A manual sync at 14:55 +08:00 completed without a new failure, and the admin page had no console errors.
+
 ## Unverified
 
-- Real production SSH test after container recreation remains a post-deployment acceptance step.
+- A second container recreation was not performed solely to repeat the persistence test.

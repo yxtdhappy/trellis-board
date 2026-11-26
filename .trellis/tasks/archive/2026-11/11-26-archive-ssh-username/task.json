@@ -3,7 +3,7 @@
   "name": "archive-ssh-username",
   "title": "修复归档 SSH 同步丢失登录用户名",
   "description": "归档 Git SSH 同步不应依赖容器内 SSH 配置，需持久化并正确使用 SSH 登录用户名，同时兼容已丢失用户名的存量项目。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "task_type": "complex",
   "work_type": "fullstack",
@@ -13,7 +13,7 @@
   "creator": "yhj",
   "assignee": "yhj",
   "createdAt": "2026-11-26",
-  "completedAt": null,
+  "completedAt": "2026-11-26",
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
@@ -28,6 +28,16 @@
     "label_source": "user-explicit",
     "work_type_updated_at": "2026-11-26T14:04:41",
     "task_type_updated_at": "2026-11-26T14:04:49",
+    "commits": [
+      "de6b5364c042ac3c2852629a7043fbae8942178e"
+    ],
+    "commit_set_at": "2026-11-26T15:00:06",
+    "check_override": {
+      "by": "yhj",
+      "reason": "用户主动调用 trellis-finish-work，确认接受 main-session 内联检查并完成生产验收",
+      "commit": "de6b5364c042ac3c2852629a7043fbae8942178e",
+      "at": "2026-11-26T14:58:31"
+    },
     "check_binding": {
       "commit": "de6b5364c042ac3c2852629a7043fbae8942178e",
       "base": "09aceaf06681d450eb1c5428c77d6ea1dc6d574e",
@@ -42,11 +52,7 @@
         ".trellis/spec/frontend/rendering-and-state.md"
       ],
       "diff": "sha256:b766cb5ab223e728a48ef48a0d8d29e865a551e6f3cd7a97c582cf600e674c58",
-      "report_sha256": "4663e870a54475db4481f3e467a46e80b5c4e832fb23f78b312d7fbea74b0204"
-    },
-    "commits": [
-      "de6b5364c042ac3c2852629a7043fbae8942178e"
-    ],
-    "commit_set_at": "2026-11-26T14:42:34"
+      "report_sha256": "7df15e7a99592c456c89f1798f9b45dbede2572226ed6e78e126f0317d9181c1"
+    }
   }
 }
