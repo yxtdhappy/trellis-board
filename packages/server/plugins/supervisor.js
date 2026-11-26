@@ -111,6 +111,8 @@ export class PluginSupervisor {
     this.userProvider = userProvider ?? (() => this.actorContext?.getStore?.() ?? null)
     this.coreCapabilities = createCoreCapabilities({
       repositories,
+      // team 宿主刷新 this.repositories 后，capability 读到的必须是最新快照。
+      repositoriesProvider: () => this.repositories,
       repositoryService,
       userProvider: (state) => this.userProvider(state),
       listCapabilities: () => this.capabilityCatalog(),

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guides index: check validation baseline and cross-layer contracts before reporting quality gate."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check that the fix reuses existing capability contracts instead of adding duplicate paths."}

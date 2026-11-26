@@ -33,7 +33,7 @@ function writePlugin(dir, id, { enabled = true } = {}) {
   return { pluginDir, enabled }
 }
 
-async function withHost(fn) {
+async function withHost(fn, { repositoriesProvider } = {}) {
   const workspace = makePluginWorkspace()
   const db = openPluginWorkspaceDatabase(workspace)
   const bundledDir = path.join(workspace.root, 'bundled')
@@ -52,7 +52,9 @@ async function withHost(fn) {
       pluginsDir: workspace.pluginsDir,
       bundledPluginsDir: bundledDir,
       hostVersion: '0.4.24',
-      repositoriesProvider: () => [{ id: 'project-a', name: '项目 A', path: '/tmp/project-a' }],
+      repositoriesProvider:
+        repositoriesProvider ??
+        (() => [{ id: 'project-a', name: '项目 A', path: '/tmp/project-a' }]),
       logger: { info() {}, warn() {}, error() {} },
     })
     closeables.push(host)
@@ -83,6 +85,62 @@ test('load 从 registry 建状态，默认只启用 witops-core', async () => {
     )
     assert.equal(host.supervisor.repositories.length, 1)
   })
+})
+
+test('核心 capability 读取 repositoriesProvider 的最新项目快照', async () => {
+  let rows = [{ id: 'project-a', name: '项目 A', path: '/tmp/project-a' }]
+  await withHost(
+    async ({ host }) => {
+      await host.load()
+      const state = { manifest: { permissions: ['projects:read', 'repositories:read'] } }
+
+      const first = await host.supervisor.coreCapabilities.call(
+        state,
+        'trellis.projects',
+        'list',
+        {},
+      )
+      assert.deepEqual(
+        first.projects.map((item) => item.repositoryId),
+        ['project-a'],
+      )
+
+      // 模拟 team 宿主在重扫时整体替换 repositories 快照。
+      rows = [...rows, { id: 'project-b', name: '项目 B', path: '/tmp/project-b' }]
+      await host.load()
+
+      const listed = await host.supervisor.coreCapabilities.call(
+        state,
+        'trellis.projects',
+        'list',
+        {},
+      )
+      assert.deepEqual(
+        listed.projects.map((item) => item.repositoryId),
+        ['project-a', 'project-b'],
+      )
+
+      const repositories = await host.supervisor.coreCapabilities.call(
+        state,
+        'trellis.repositories',
+        'list',
+        {},
+      )
+      assert.deepEqual(
+        repositories.repositories.map((item) => item.id),
+        ['project-a', 'project-b'],
+      )
+
+      const current = await host.supervisor.coreCapabilities.call(
+        state,
+        'trellis.projects',
+        'current',
+        { repositoryId: 'project-b' },
+      )
+      assert.equal(current.project.repositoryId, 'project-b')
+    },
+    { repositoriesProvider: () => rows },
+  )
 })
 
 test('enabled 开关持久化，重扫不覆盖管理员决定', async () => {

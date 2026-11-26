@@ -41,7 +41,7 @@
 WitOps 同步下来的任务目录包含：
 
 - `task.md`：平台原文（front matter + 标题、类型、状态、负责人、优先级、描述、子任务清单）。这是任务内容的真源。
-- `prd.md`：占位提示，指向 `task.md`，等待 `trellis-brainstorm` 生成正式 PRD。
+- `prd.md`：一行占位事实（平台原文在 `task.md`，本文件尚未生成），不含流程步骤；正式 PRD 由当前 Trellis 流程生成。
 - `task.json`：`meta.witops` 记录 `id`、`type`、`typeName`、`parentBusinessId` 等字段。
 
 下游消费者读取任务内容时应优先读 `task.md`；`prd.md` 若仍是占位内容（含「prd.md 尚未生成」或「平台原文在 `task.md`」），不应作为需求上下文使用。

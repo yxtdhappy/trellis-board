@@ -263,7 +263,7 @@ export function buildTaskDraft({
     ['链接', link],
   ].filter(([, value]) => value !== '' && value !== null && value !== undefined)
 
-  // 平台原文完整落 task.md：后续 trellis-brainstorm 以它为输入生成 prd.md。
+  // 平台原文完整落 task.md：任务来源以它为准，不在这里推断流程。
   const sourceParts = [
     `# ${code} ${name}`,
     '',
@@ -289,17 +289,12 @@ export function buildTaskDraft({
   }
   const taskMarkdown = `${sourceParts.join('\n')}\n`
 
+  // prd.md 只陈述事实：任务来源在 task.md，本文件还没写需求。
+  // 不写步骤清单或 skill 名——Trellis 流程会演进，占位文本不能替 agent 决定下一步。
   const prd = [
     `# ${code} ${name}`,
     '',
-    '> 本任务由 WitOps 同步创建，平台原文在 `task.md`。',
-    '> prd.md 尚未生成：先运行 trellis-brainstorm，用澄清后的需求覆盖本文件。',
-    '',
-    '## 下一步',
-    '',
-    '- [ ] 阅读 `task.md` 的来源表与任务描述',
-    '- [ ] 运行 trellis-brainstorm 生成需求澄清与实现范围',
-    '- [ ] 把 brainstorm 结果写回 `prd.md`，再开始实现',
+    '> 平台原文在 `task.md`；prd.md 尚未生成，本文件为占位。',
     '',
   ].join('\n')
 

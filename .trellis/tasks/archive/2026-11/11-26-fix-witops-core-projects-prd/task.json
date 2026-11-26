@@ -1,0 +1,50 @@
+{
+  "id": "fix-witops-core-projects-prd",
+  "name": "fix-witops-core-projects-prd",
+  "title": "修复 weint-core 插件项目列表与 PRD 模板",
+  "description": "修复下发任务项目下拉框只显示部分项目，以及 prd.md 写死 trellis-brainstorm 流程阻碍 agent 从 task.md 开始任务的问题",
+  "status": "completed",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "kanyifei",
+  "assignee": "kanyifei",
+  "createdAt": "2026-11-26",
+  "completedAt": "2026-11-26",
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": "f04013f1de1a2aa41c076b97cf81524fecf8b24f",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "commits": [
+      "f04013f1de1a2aa41c076b97cf81524fecf8b24f"
+    ],
+    "commit_set_at": "2026-11-26T14:13:39",
+    "check_binding": {
+      "commit": "f04013f1de1a2aa41c076b97cf81524fecf8b24f",
+      "base": "cb46da98e97b64f169284b7327cbaf9ca73319bb",
+      "scope": [
+        "packages/server/plugins/core-capabilities.js",
+        "packages/server/plugins/supervisor.js",
+        "packages/server/plugins/task-service.js",
+        "packages/server/test/team-plugin-host.test.js",
+        "plugins/witops-core/README.md",
+        "plugins/witops-core/dispatch.js",
+        "plugins/witops-core/mapper.js",
+        "plugins/witops-core/test/index.test.js"
+      ],
+      "diff": "sha256:a792ce9489e11da9b5aa30739da0806876f97492a46c57051d604abdb6ea1ee7",
+      "report_sha256": "52cd861cc602b153c032903b62718cce0c1e3cbb8c14102dab025b7cc033fc47"
+    }
+  }
+}

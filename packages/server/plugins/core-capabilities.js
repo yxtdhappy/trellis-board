@@ -182,12 +182,12 @@ function publicProject({ id, name, path: repositoryPath, branch, branchName, dev
   return project
 }
 
-function projectList(repositories, repositoryService) {
-  return (repositoryService?.list ? repositoryService.list() : repositories).map(publicProject)
+function projectList(repositoriesOf, repositoryService) {
+  return (repositoryService?.list ? repositoryService.list() : repositoriesOf()).map(publicProject)
 }
 
-function repositoryList(repositories, repositoryService) {
-  return repositoryService?.list ? repositoryService.list() : repositories
+function repositoryList(repositoriesOf, repositoryService) {
+  return repositoryService?.list ? repositoryService.list() : repositoriesOf()
 }
 
 function normalizeInputs(params = {}) {
@@ -235,6 +235,7 @@ function addInMemory(repositories, inputs) {
 
 export function createCoreCapabilities({
   repositories,
+  repositoriesProvider = null,
   repositoryService,
   userProvider = () => null,
   listCapabilities = () => [],
@@ -244,6 +245,11 @@ export function createCoreCapabilities({
 }) {
   const definitions = new Map(CORE_CAPABILITIES.map((definition) => [definition.name, definition]))
   const handlers = new Map()
+
+  // team 宿主在载入/重扫时整体替换 supervisor.repositories；如果这里固定住构造时的数组，
+  // trellis.projects.list 会一直读到旧快照，面板的项目下拉就不完整。
+  const repositoriesOf = () =>
+    typeof repositoriesProvider === 'function' ? repositoriesProvider() : repositories
 
   handlers.set('trellis.user', {
     async current(_params, state) {
@@ -282,19 +288,19 @@ export function createCoreCapabilities({
 
   handlers.set('trellis.projects', {
     async list() {
-      return { projects: projectList(repositories, repositoryService) }
+      return { projects: projectList(repositoriesOf, repositoryService) }
     },
     async get(params) {
       const id = String(params?.id ?? params?.repositoryId ?? '').trim()
       if (!id) throw invalidParams('projects/get 缺少 id')
-      const project = projectList(repositories, repositoryService).find(
+      const project = projectList(repositoriesOf, repositoryService).find(
         (item) => item.repositoryId === id,
       )
       if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
       return { project }
     },
     async current(params) {
-      const projects = projectList(repositories, repositoryService)
+      const projects = projectList(repositoriesOf, repositoryService)
       const requested = String(params?.repositoryId ?? params?.id ?? '').trim()
       const project = requested
         ? (projects.find((item) => item.repositoryId === requested) ?? null)
@@ -306,14 +312,14 @@ export function createCoreCapabilities({
     async branches(params) {
       const id = String(params?.repositoryId ?? params?.id ?? '').trim()
       if (!id) throw invalidParams('projects/branches 缺少 repositoryId')
-      const project = projectList(repositories, repositoryService).find(
+      const project = projectList(repositoriesOf, repositoryService).find(
         (item) => item.repositoryId === id,
       )
       if (!project) throw appError(ERROR_CODES.NOT_FOUND, `项目不存在: ${id}`)
       return { repositoryId: project.repositoryId, ...readLocalBranches(project.path) }
     },
     async developers(params) {
-      const projects = projectList(repositories, repositoryService)
+      const projects = projectList(repositoriesOf, repositoryService)
       const requested = String(params?.repositoryId ?? params?.id ?? '').trim()
       const project = requested
         ? projects.find((item) => item.repositoryId === requested)
@@ -331,7 +337,7 @@ export function createCoreCapabilities({
   handlers.set('trellis.repositories', {
     async list() {
       return {
-        repositories: repositoryList(repositories, repositoryService).map(publicRepository),
+        repositories: repositoryList(repositoriesOf, repositoryService).map(publicRepository),
       }
     },
     async add(params) {
@@ -340,13 +346,14 @@ export function createCoreCapabilities({
         const result = await repositoryService.addMany(inputs)
         return {
           ...result,
-          repositories: repositoryList(repositories, repositoryService).map(publicRepository),
+          repositories: repositoryList(repositoriesOf, repositoryService).map(publicRepository),
         }
       }
-      const added = addInMemory(repositories, inputs)
+      const current = repositoriesOf()
+      const added = addInMemory(current, inputs)
       return {
         added: added.map(publicRepository),
-        repositories: repositories.map(publicRepository),
+        repositories: current.map(publicRepository),
       }
     },
     async remove(params) {
@@ -356,15 +363,16 @@ export function createCoreCapabilities({
         const result = await repositoryService.remove({ id })
         return {
           ...result,
-          repositories: repositoryList(repositories, repositoryService).map(publicRepository),
+          repositories: repositoryList(repositoriesOf, repositoryService).map(publicRepository),
         }
       }
-      const index = repositories.findIndex((repository) => repository.id === id)
+      const current = repositoriesOf()
+      const index = current.findIndex((repository) => repository.id === id)
       if (index < 0) throw appError(ERROR_CODES.NOT_FOUND, `仓库不存在: ${id}`)
-      const [removed] = repositories.splice(index, 1)
+      const [removed] = current.splice(index, 1)
       return {
         removed: publicRepository(removed),
-        repositories: repositories.map(publicRepository),
+        repositories: current.map(publicRepository),
       }
     },
   })

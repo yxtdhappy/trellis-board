@@ -35,7 +35,7 @@ function fileDorGapCount(full, task) {
   if (task?.status !== 'planning') return 0
   let gaps = 0
   const prd = readText(path.join(full, 'prd.md')).trim()
-  // WitOps 同步的 prd.md 只是占位，真正的 PRD 要等 trellis-brainstorm 生成。
+  // WitOps 同步的 prd.md 只是占位，真正的 PRD 由 Trellis 当前的规划流程生成。
   const placeholder = /prd\.md 尚未生成|平台原文在 `task\.md`/.test(prd)
   if (prd.length < 20 || placeholder) gaps += 1
   if (!fs.existsSync(path.join(full, 'implement.md'))) gaps += 1
