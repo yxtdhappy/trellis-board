@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 87
+- **Total Sessions**: 88
 - **Last Active**: 2026-11-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~224 | Active |
+| `journal-2.md` | ~247 | Active |
 | `journal-1.md` | ~1963 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 88 | 2026-11-26 | 优化项目成员账号选择体验 | `45966b16e43e09570d0c3bc3ce71a94175281edf` | `main` |
 | 87 | 2026-11-26 | 放行 WitOps 图片源以修复 Board 工件预览 | `6ba7575` | `main` |
 | 86 | 2026-11-26 | 切换服务器地址时备份并清理客户端数据 | `7fb97b5`, `ef0a184` | `main` |
 | 85 | 2026-11-26 | 修复归档 SSH 用户名并完成生产验收 | `de6b536`, `6008968` | `main` |

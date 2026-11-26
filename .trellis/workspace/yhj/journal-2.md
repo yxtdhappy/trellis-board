@@ -222,3 +222,26 @@ Board 工件预览的 CSP 增加 img-src 'self' http://witops.weintdata.cn，历
 
 - 部署后打开任务 11-26-B72369 的“工件查看 · WitOps 原文”，确认截图正常显示
 - 如后续需支持其他 WitOps 域名，另立需求，不改为动态 CSP
+
+
+## Session 88: 优化项目成员账号选择体验
+<!-- trellis-session: v=2 fp=7b39a1740ee115f3 -->
+
+**Date**: 2026-11-26
+**Task**: 优化项目成员账号选择体验
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+管理员可从 active 账号中选择项目成员并提交内部 UUID；保存后刷新权威成员列表；项目负责人保留手工 UUID 路径。完成 lint、类型检查、793 项测试、隔离浏览器 E2E 和用户服务端页面人工验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `45966b16e43e09570d0c3bc3ce71a94175281edf` | fix(web): improve project member account selection |
+
+### Status
+
+[OK] **Completed**
