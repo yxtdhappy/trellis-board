@@ -269,3 +269,27 @@ Board 工件预览的 CSP 增加 img-src 'self' http://witops.weintdata.cn，历
 ### Status
 
 [OK] **Completed**
+
+
+## Session 89: 修复初始化Git忽略规则兼容性
+<!-- trellis-session: v=2 fp=09c614da69b337dc -->
+
+**Date**: 2026-11-26
+**Task**: 修复初始化Git忽略规则兼容性
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+初始化与旧项目一键推送前自愈共享 Trellis 路径反忽略规则，保留用户规则和 CRLF，始终忽略 template hashes，并补充 Git 端到端回归测试及 CI 规则去重修复。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `23360f22f4f133251bd12a50636ca40c7184da3d` | fix-onboarding-compatible-strict-gitignore |
+| `f55c819f4c66a5d2eb86e739f9f559569e3b3886` | fix-onboarding-template-hash-dedupe |
+
+### Status
+
+[OK] **Completed**
