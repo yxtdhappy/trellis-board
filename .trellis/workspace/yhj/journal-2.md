@@ -70,3 +70,27 @@ check-report 绑定哈希改为 LF 规范化字节，兼容旧原始哈希；sta
 ### Status
 
 [OK] **Completed**
+
+
+## Session 83: 项目栏已关联分支重新绑定
+<!-- trellis-session: v=2 fp=594bd031bcc569e5 -->
+
+**Date**: 2026-11-26
+**Task**: 项目栏已关联分支重新绑定
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+已关联状态的分支图标改为可点击，新增 Board-only 本地分支读取 IPC 与分支弹窗；非当前分支需手动切换，重绑复用既有接入流程。前置拆分 git 模块。Web/desktop 测试与构建通过；Rust 编译待 CI。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2fb4907` | refactor(desktop): 拆分 git 模块并补充分支列表操作 |
+| `2fd7b57` | feat(project-rail): 支持重新绑定当前检出的其他分支 |
+
+### Status
+
+[OK] **Completed**
