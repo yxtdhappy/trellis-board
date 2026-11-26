@@ -3,8 +3,8 @@ mode: independent
 agent: trellis-check
 session: 01a2173d-c075-7b73-97b6-6ec7da1004fc
 base: 3ca8c7b11e4d9e8fc8dddf62b91b1e79e925c743
-scope: .trellis/spec/backend/http-and-filesystem.md,packages/server,.trellis/tasks/11-26-server-project-removal
-diff: sha256:bbd9255090fa42f4f526f13afb12ccca0ef93af11a0d417e1794af7979c67160
+scope: .trellis/spec/backend/http-and-filesystem.md,packages/server
+diff: sha256:6373e3e00b6da92ce0ccc45d40ac0d5b004bd003f54b9ba34bbb96593f58bcbe
 ---
 # 检查报告
 
