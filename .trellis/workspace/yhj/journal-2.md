@@ -117,3 +117,27 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 85: 修复归档 SSH 用户名并完成生产验收
+<!-- trellis-session: v=2 fp=f18ab47df7bf1dc3 -->
+
+**Date**: 2026-11-26
+**Task**: 修复归档 SSH 用户名并完成生产验收
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+归档 SSH 用户名持久化到 SQLite，管理页默认 git，兼容存量空用户名并用于 SSH 认证；Jenkins #9-6008968a 发布成功，生产凭据测试返回 200，三个 SSH 归档项目同步成功；严格证据门禁通过并归档任务。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de6b536` | fix(server): 持久化归档 SSH 用户名 |
+| `6008968` | Merge remote-tracking branch 'origin/main' |
+
+### Status
+
+[OK] **Completed**
