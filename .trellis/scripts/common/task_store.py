@@ -2271,7 +2271,9 @@ def cmd_set_commit(args: argparse.Namespace) -> int:
                     "base": base,
                     "scope": scope,
                     "diff": diff,
-                    "report_sha256": hashlib.sha256(check_report.read_bytes()).hexdigest(),
+                    "report_sha256": hashlib.sha256(
+                        _canonical_report_bytes(check_report.read_bytes())
+                    ).hexdigest(),
                 }
             else:
                 print(
@@ -2569,6 +2571,7 @@ def _read_report_front_matter(path: Path) -> dict[str, str]:
         text = path.read_text(encoding="utf-8")[:4096]
     except OSError:
         return {}
+    text = text.lstrip(chr(0xFEFF))
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}
@@ -2645,6 +2648,16 @@ def _scoped_fingerprint(
     return f"sha256:{digest}", ""
 
 
+def _canonical_report_bytes(data: bytes) -> bytes:
+    """Normalize report bytes the same way the desktop sync does."""
+    stripped = data.removeprefix(b"\xef\xbb\xbf")
+    try:
+        text = stripped.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    return text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+
+
 def _update_report_front_matter(path: Path, updates: dict[str, str]) -> None:
     """Replace/add keys in a Markdown front-matter block, preserving the body."""
     text = path.read_text(encoding="utf-8")
@@ -2680,6 +2693,7 @@ def _update_report_front_matter(path: Path, updates: dict[str, str]) -> None:
     path.write_text(
         "---\n" + "\n".join(rendered).rstrip() + "\n---\n" + body_text,
         encoding="utf-8",
+        newline="\n",
     )
 
 
@@ -2796,8 +2810,10 @@ def _verify_check_report_provenance(
                 "check_binding_stale",
                 "meta.check_binding is bound to a different commit",
             )
-        report_sha = hashlib.sha256(report.read_bytes()).hexdigest()
-        if binding.get("report_sha256") != report_sha:
+        raw_report = report.read_bytes()
+        report_sha = hashlib.sha256(_canonical_report_bytes(raw_report)).hexdigest()
+        legacy_sha = hashlib.sha256(raw_report).hexdigest()
+        if binding.get("report_sha256") not in {report_sha, legacy_sha}:
             add(
                 "error",
                 "check_report_changed_after_binding",

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证测试覆盖与失败路径"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查客户端与服务端换行规则是否一致"}

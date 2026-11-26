@@ -1,0 +1,30 @@
+{
+  "id": "check-binding-normalize-eol",
+  "name": "check-binding-normalize-eol",
+  "title": "check 报告绑定改用换行规范化哈希",
+  "description": "set-commit/archive 的 check binding 按 LF 规范化哈希并兼容旧原始哈希；stamp-check 写 LF，修复跨客户端 CRLF 导致 check_report_changed_after_binding 的问题。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
