@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "5a80783a9d190e09e18c269a751620b92448654d",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,20 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
-    "task_type_updated_at": "2026-11-26T17:39:51"
+    "task_type_updated_at": "2026-11-26T17:39:51",
+    "check_binding": {
+      "commit": "5a80783a9d190e09e18c269a751620b92448654d",
+      "base": "611673ffabb425b6361ecbb947d7fc65dde7f790",
+      "scope": [
+        "packages/server",
+        "packages/desktop"
+      ],
+      "diff": "sha256:9a1fa43e4cf6e2a4de8fdd31751665a1f0f5b886c9da0c96c8a52578b2625cae",
+      "report_sha256": "160ff998282e15a90e9b9b658c2beb5ce6e4fdec7cb6b7eae6839870d9e6adca"
+    },
+    "commits": [
+      "5a80783a9d190e09e18c269a751620b92448654d"
+    ],
+    "commit_set_at": "2026-11-26T19:31:03"
   }
 }
