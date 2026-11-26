@@ -4,7 +4,7 @@
  * 去重真源是 `task.json.meta.witops.businessId`（见 links.js），插件 store 只作缓存，
  * 因此 store 丢失不会重复建任务。
  *
- * 平台原文写 `task.md`；`prd.md` 只放占位提示，等 trellis-brainstorm 生成后再覆盖。
+ * 平台原文写 `task.md`；`prd.md` 只放一行占位事实，正式内容由 Trellis 当前的规划流程生成。
  * 需求（type=3）下发时，平台的已拆分子任务会作为 Trellis 子任务挂在父任务下。
  */
 import fs from 'node:fs'

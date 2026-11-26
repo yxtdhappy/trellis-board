@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared guides index: use code-reuse, module-size, cross-layer and LF conventions when changing server/plugin code."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "New helper/parameter should follow repository code-reuse and consumer-search rules."}

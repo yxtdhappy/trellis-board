@@ -186,8 +186,11 @@ test('buildTaskDraft 生成标题、PRD、meta 与 HTML 原文', () => {
   assert.equal(draft.slug, 'T10001')
   assert.match(draft.title, /T10001/)
   assert.match(draft.taskMarkdown, /^\| 字段 \| 值 \|$/m)
+  assert.match(draft.prd, /平台原文在 `task\.md`/)
   assert.match(draft.prd, /prd\.md 尚未生成/)
-  assert.match(draft.prd, /trellis-brainstorm/)
+  // 占位文本不能包含流程指令：流程会演进，写死步骤会误导 agent。
+  assert.doesNotMatch(draft.prd, /trellis-brainstorm/)
+  assert.doesNotMatch(draft.prd, /- \[ \]/)
   assert.equal(draft.meta.witops.businessId, '10001')
   assert.equal(draft.meta.agent, 'opencode')
   assert.match(draft.meta.witops.url, /nodeTaskDetail\/4\/10001$/)
@@ -271,7 +274,10 @@ test('POST /dispatch 创建任务、写 PRD 与 meta，并保证幂等', async (
 
     const prd = fs.readFileSync(path.join(directory, 'prd.md'), 'utf8')
     assert.match(prd, /prd\.md 尚未生成/)
-    assert.match(prd, /trellis-brainstorm/)
+    assert.match(prd, /平台原文在 `task\.md`/)
+    assert.doesNotMatch(prd, /trellis-brainstorm/)
+    assert.doesNotMatch(prd, /- \[ \]/)
+    assert.match(prd, /^# /)
 
     const taskJson = JSON.parse(fs.readFileSync(path.join(directory, 'task.json'), 'utf8'))
     assert.equal(taskJson.meta.witops.businessId, '10001')
