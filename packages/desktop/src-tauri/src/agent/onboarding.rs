@@ -37,6 +37,7 @@ const DEFAULT_INITIAL_SYNC_MODE: &str = "review";
 const INITIAL_SYNC_MODES: [&str; 3] = ["bootstrap", "safe", "review"];
 const INITIAL_COMMIT_MESSAGE: &str = "初始化trellis";
 const GITIGNORE_TITLE: &str = "# Trellis local agent configs (local only)";
+const SHARED_GITIGNORE_TITLE: &str = "# Trellis shared initialization files (tracked by Board)";
 /// `trellis init` 写入的模板基线：只描述本机磁盘状态，不随仓库共享
 /// （见 `.trellis/spec/backend/desktop-agent-runtime.md` 第 6 节）。
 const TEMPLATE_HASHES_PATH: &str = ".trellis/.template-hashes.json";
@@ -351,19 +352,117 @@ async fn read_developer_name(repo_path: &Path) -> Option<String> {
     None
 }
 
-/// 把所选 Agent 工具的本机配置路径与本机模板基线追加到项目根 `.gitignore`。
+/// 把所选 Agent 工具的本机配置路径、共享初始化文件与本机模板基线写入项目根 `.gitignore`。
 /// 保留原内容与换行风格；等价规则（忽略首尾 `/` 与空白）不重复添加；无新增时不写文件。
 async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> AgentResult<()> {
     let rules = trellis_cli::agent_gitignore_paths(agent_tools);
     if !rules.is_empty() {
         append_gitignore_rules(repo_path, GITIGNORE_TITLE, &rules).await?;
     }
+    ensure_shared_gitignore_rules(repo_path).await?;
     ensure_template_hashes_ignored(repo_path).await
 }
 
 /// `.template-hashes.json` 只描述本机磁盘状态，忽略后不再随仓库共享。
 async fn ensure_template_hashes_ignored(repo_path: &Path) -> AgentResult<()> {
-    append_gitignore_rules(repo_path, LOCAL_STATE_TITLE, &[TEMPLATE_HASHES_RULE]).await
+    let rules = [TEMPLATE_HASHES_RULE.to_string()];
+    append_gitignore_rules_at_end(repo_path, LOCAL_STATE_TITLE, &rules).await
+}
+
+/// 用一键提交已有的固定路径生成反忽略规则，避免维护第二份共享路径清单。
+fn shared_gitignore_rules() -> Vec<String> {
+    let mut rules = Vec::with_capacity(INITIAL_COMMIT_PATHS.len() + 2);
+    for path in INITIAL_COMMIT_PATHS {
+        if path == ".trellis" || path == ".agents" {
+            rules.push(format!("!/{path}/"));
+            rules.push(format!("!/{path}/**"));
+        } else {
+            rules.push(format!("!/{path}"));
+        }
+    }
+    rules
+}
+
+async fn ensure_shared_gitignore_rules(repo_path: &Path) -> AgentResult<()> {
+    let rules = shared_gitignore_rules();
+    append_gitignore_rules_at_end(repo_path, SHARED_GITIGNORE_TITLE, &rules).await
+}
+
+/// 生成的规则必须位于用户规则之后；旧的受控小节也要整体移到末尾。
+async fn append_gitignore_rules_at_end(
+    repo_path: &Path,
+    title: &str,
+    rules: &[String],
+) -> AgentResult<()> {
+    let path = repo_path.join(".gitignore");
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            return err(
+                code::GIT_FAILED,
+                format!("无法读取项目 .gitignore：{error}"),
+            )
+        }
+    };
+    let text = String::from_utf8(bytes).map_err(|_| {
+        AgentError::new(
+            code::GIT_FAILED,
+            "项目 .gitignore 不是 UTF-8 编码，无法安全追加忽略规则",
+        )
+    })?;
+    let normalized_rules = rules
+        .iter()
+        .map(|rule| normalize_gitignore_rule(rule))
+        .collect::<HashSet<_>>();
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let kept = without_managed_gitignore_section(&text, title, &normalized_rules);
+    let mut next = kept.join(newline);
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push_str(newline);
+    }
+    next.push_str(title);
+    next.push_str(newline);
+    for rule in rules {
+        next.push_str(rule);
+        next.push_str(newline);
+    }
+    if next == text {
+        return Ok(());
+    }
+    tokio::fs::write(&path, next.as_bytes())
+        .await
+        .map_err(|error| {
+            AgentError::new(
+                code::GIT_FAILED,
+                format!("无法写入项目 .gitignore：{error}"),
+            )
+        })
+}
+
+/// 只移除本客户端专用标题下的连续生成块，保留用户在其它位置写的等价规则。
+fn without_managed_gitignore_section<'a>(
+    text: &'a str,
+    title: &str,
+    managed_rules: &HashSet<String>,
+) -> Vec<&'a str> {
+    let mut kept = Vec::new();
+    let mut in_managed_section = false;
+    for line in text.lines() {
+        if line.trim() == title {
+            in_managed_section = true;
+            continue;
+        }
+        if in_managed_section {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || managed_rules.contains(&normalize_gitignore_rule(line)) {
+                continue;
+            }
+            in_managed_section = false;
+        }
+        kept.push(line);
+    }
+    kept
 }
 
 /// 按小节追加规则：标题与已存在的等价规则都不重复写，无新增时不动文件。
@@ -784,7 +883,6 @@ pub async fn commit_and_push_initial(
 ) -> AgentResult<InitialPushState> {
     let snapshot = inspect_git_project(repo_path, hooks_dir, allow_file_remote, None).await?;
     let root = snapshot.root;
-    let paths = initial_commit_paths(&root);
     // pathspec 提交按工作区重建这些路径，已跟踪但仍在工作区的 manifest 会被写回提交；
     // 只有索引里没有其它暂存改动时才改走索引提交，让脱管的删除真正落进提交；
     // 读不到索引状态时退回 pathspec 提交，宁可本次不脱管也不卷进未知改动。
@@ -792,14 +890,17 @@ pub async fn commit_and_push_initial(
         Ok(staged) => staged.iter().all(|path| is_initial_commit_path(path)),
         Err(_) => false,
     };
-    // manifest 只描述本机磁盘：先补忽略规则，再把已跟踪的旧文件从索引移除，
-    // 避免本次提交把它带上远端；重试时两步都幂等。没有 .trellis 时不产生副作用。
+    // 先放行共享初始化文件并重新忽略本机 manifest，再把已跟踪的旧文件从索引移除，
+    // 避免本次提交把它带上远端；重试时各步都幂等。没有 .trellis 时不产生副作用。
     if root.join(".trellis").is_dir() {
+        ensure_shared_gitignore_rules(&root).await?;
         ensure_template_hashes_ignored(&root).await?;
         if index_is_scoped && git::is_tracked(&root, hooks_dir, TEMPLATE_HASHES_PATH).await? {
             git::untrack_path(&root, hooks_dir, TEMPLATE_HASHES_PATH).await?;
         }
     }
+    // 规则修复可能新建 .gitignore，因此路径清单必须在修复完成后再生成。
+    let paths = initial_commit_paths(&root);
     git::add_paths(&root, hooks_dir, &paths).await?;
     if git::has_staged_changes(&root, hooks_dir, &paths).await? {
         if index_is_scoped {

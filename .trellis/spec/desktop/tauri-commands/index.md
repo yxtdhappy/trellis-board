@@ -328,6 +328,11 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 - push 使用全限定 refspec `refs/heads/<branch>:refs/heads/<branch>`；分支来自仓库当前分支。
 - 初始化（完整 init / Agent-only / mode=None 重试）后按所选工具把根锚定规则追加到项目 `.gitignore`：
   22 个平台用顶层目录，Copilot 用 `.github` 精确子路径；等价规则去重、保留 CRLF、无新增不写。
+- 项目已有 `.gitignore` 可能忽略 `.trellis`、`.agents`、`.gitattributes`、`AGENTS.md` 或 `.gitignore`。
+  初始化与 `commit_and_push_initial` 暂存前都必须确保专用受控小节存在，并整体位于其它用户规则之后：
+  `!/<目录>/`、`!/<目录>/**`（`.trellis`、`.agents`）和 `!/<文件>`（其余三个共享路径）。
+- 受控小节只按固定标题识别；不得删除或重排用户在其它位置手写的等价规则。小节移动后必须在末尾重新追加
+  `/.trellis/.template-hashes.json`，保证本机状态仍被忽略。不得使用 `git add -f`。
 - `.gitignore` 写入失败按初始化失败返回；重试可补齐。
 - `developerName` 读取 `.trellis/.developer` 首个非空 `name=`，最长 120 字符；两个初始化弹窗
   优先使用它，缺失时回退原有项目/账号默认值。
@@ -342,16 +347,23 @@ fn client_identity(app: AppHandle, window: WebviewWindow) -> Result<ClientIdenti
 | push 非快进 / 远端有新提交 | `NO_FAST_FORWARD` 可读提示 |
 | 网络或认证失败 | `REMOTE_UNREACHABLE`，不误报已推送 |
 | `.gitignore` 只读或非 UTF-8 | 初始化返回明确错误 |
+| 根 `.gitignore` 忽略共享初始化路径 | 先追加受控反忽略小节；普通 `git add` 成功，不返回 ignored paths 错误 |
+| 已初始化旧项目直接一键推送 | 暂存前自愈受控小节，不需要重新初始化 |
+| `.trellis/.template-hashes.json` | 始终位于共享放行规则之后并保持 ignored，不进入提交 |
 | `.developer` 缺失 / name 为空 | `developerName = null`，前端回退原有默认值 |
 
 ### 5. Good/Base/Bad Cases
 
 - Good：初始化后点击一键按钮，只产生一个 `初始化trellis` 提交，push 后状态 ready。
+- Good：项目原本忽略 `.trellis`/`.agents`/`*.md`，客户端仍能用普通 `git add` 提交通用初始化文件，且本机模板基线保持未提交。
 - Base：`.trellis` 已提交但尚未推送，点击按钮只 push，不产生空提交。
 - Bad：直接 `git add .trellis && git commit`，会把用户其他已暂存改动一起提交。
+- Bad：用 `git add -f` 绕过全部忽略规则，可能把 `.template-hashes.json` 等本机状态提交。
 
 ### 6. Tests Required
 
+- Rust：严格根 `.gitignore` 下 `git check-ignore` 仅保留本机状态命中；验证嵌套共享文件、用户手写等价规则保留、受控小节位于后加用户规则之后、CRLF/无尾换行和重复执行幂等。
+- Rust：bare 远端端到端证明普通暂存成功、`.gitignore` 自身可提交、只提交初始化路径、模板基线不入库且远端 HEAD 一致。
 - Rust：写操作参数、`diff --cached --quiet` 0/1/错误映射、固定 pathspec 不提交其他暂存文件、
   `AGENTS.md`/`.gitattributes`/`.agents/` 进入初始化提交、bare 远端端到端、二次点击不产生空提交、
   developer 解析、`.gitignore` 追加/去重/CRLF/幂等。

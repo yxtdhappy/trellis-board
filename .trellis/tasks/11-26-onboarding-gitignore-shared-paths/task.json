@@ -1,0 +1,30 @@
+{
+  "id": "onboarding-gitignore-shared-paths",
+  "name": "onboarding-gitignore-shared-paths",
+  "title": "初始化时修正Git忽略规则以支持一键推送",
+  "description": "初始化后确保共享Trellis文件不被项目.gitignore忽略且保留本机状态规则并验证一键提交推送",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P1",
+  "creator": "yhj",
+  "assignee": "yhj",
+  "createdAt": "2026-11-26",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
