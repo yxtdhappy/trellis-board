@@ -43,6 +43,7 @@
     "commits": [
       "20a5c21c359684965aea5b48bdf437b5d7ad3d43"
     ],
-    "commit_set_at": "2026-11-27T17:47:06"
+    "commit_set_at": "2026-11-27T17:47:06",
+    "plugins_commit": "d7f39dc"
   }
 }
