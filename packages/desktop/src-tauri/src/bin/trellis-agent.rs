@@ -262,8 +262,16 @@ async fn serve(store: Arc<ConfigStore>, args: &Parsed) -> AgentResult<()> {
     .await?;
     bridge.set_runtime(runtime.clone());
     {
+        // 启动先推一次，之后每分钟校正一次：绑定由 CLI 增删时桥不一定收到状态事件。
         let pusher = bridge.clone();
-        tokio::spawn(async move { pusher.push_repositories().await });
+        tokio::spawn(async move {
+            pusher.push_repositories().await;
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                pusher.push_repositories().await;
+            }
+        });
     }
     let server = bridge.clone();
     tokio::spawn(async move {
