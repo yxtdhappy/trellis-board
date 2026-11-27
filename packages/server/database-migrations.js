@@ -15,6 +15,7 @@ import {
   SCHEMA_V16_SQL,
   SCHEMA_V17_SQL,
   SCHEMA_V18_TASK_OWNERSHIP_INBOX_COLUMNS,
+  SCHEMA_V19_TASK_SPACE_COLUMNS,
   hasColumn,
   rebuildTaskCommandTableForV16,
 } from './database-sql/index.js'
@@ -486,6 +487,14 @@ export function ensureV18Schema(db) {
   for (const [name, definition] of SCHEMA_V18_TASK_OWNERSHIP_INBOX_COLUMNS) {
     if (!hasColumn(db, 'sync_task_ownership_inbox', name)) {
       db.exec(`ALTER TABLE sync_task_ownership_inbox ADD COLUMN ${name} ${definition}`)
+    }
+  }
+}
+
+export function ensureV19Schema(db) {
+  for (const [name, definition] of SCHEMA_V19_TASK_SPACE_COLUMNS) {
+    if (!hasColumn(db, 'sync_task_space', name)) {
+      db.exec(`ALTER TABLE sync_task_space ADD COLUMN ${name} ${definition}`)
     }
   }
 }

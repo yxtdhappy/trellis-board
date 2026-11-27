@@ -184,6 +184,7 @@ export type ArchiveTaskSpaceSync = {
   remoteUrl: string
   origin: string | null
   branchName: string
+  isWorktree: boolean
   credentialState: string
   credential: ArchiveGitCredential | null
   status: string

@@ -15,6 +15,7 @@ pub(super) fn test_binding(task_space_id: &str) -> AgentBinding {
         display_name: "Repo".to_string(),
         created_at: "2026-11-12T00:00:00.000Z".to_string(),
         allow_file_remote: false,
+        is_worktree: false,
         read_only: false,
         sync_status: "approved".to_string(),
         detach_pending: false,

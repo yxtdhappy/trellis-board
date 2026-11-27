@@ -27,6 +27,7 @@ import {
   ensureV16Schema,
   ensureV17Schema,
   ensureV18Schema,
+  ensureV19Schema,
 } from './database-migrations.js'
 import { importLegacyData } from './database-legacy-import.js'
 import { readMeta, writeMeta } from './database-meta.js'
@@ -42,7 +43,7 @@ function ensureSchema(db, { databaseFile } = {}) {
 
   if (
     numericVersion !== null &&
-    ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].includes(numericVersion)
+    ![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19].includes(numericVersion)
   ) {
     throw new Error(
       `不支持的数据库 schema 版本: ${schemaVersion}；本版本不做旧库迁移，请删除当前 board.sqlite 后重建`,
@@ -70,6 +71,7 @@ function ensureSchema(db, { databaseFile } = {}) {
     ensureV16Schema(db)
     ensureV17Schema(db)
     ensureV18Schema(db)
+    ensureV19Schema(db)
     if (numericVersion == null || numericVersion < DATABASE_SCHEMA_VERSION) {
       writeMeta(db, 'schema_version', DATABASE_SCHEMA_VERSION)
     }

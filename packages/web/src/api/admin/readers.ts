@@ -351,6 +351,7 @@ function readArchiveTaskSpaceSync(input: unknown): ArchiveTaskSpaceSync {
     remoteUrl: text(row.remoteUrl ?? row.remote_url),
     origin: optionalText(row.origin),
     branchName: text(row.branchName ?? row.branch_name),
+    isWorktree: flag(row.isWorktree ?? row.is_worktree),
     credentialState: text(row.credentialState ?? row.credential_state, 'missing'),
     credential: row.credential ? readArchiveGitCredential(row.credential) : null,
     status: text(row.status, 'idle'),

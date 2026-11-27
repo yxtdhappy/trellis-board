@@ -10,7 +10,14 @@ import { appendAuditEvent } from '../audit.js'
 import { ERROR_CODES, teamError } from '../errors.js'
 import { assertLocalRepoKey, nowIso, optionalText, requiredText, SAFE_ID } from './shared.js'
 
-export function createAttach({ db, statements, access, view, allowFileRemote }) {
+export function createAttach({
+  db,
+  statements,
+  access,
+  view,
+  allowFileRemote,
+  onTaskSpaceWorktreeMarked = null,
+}) {
   function attach(userId, agentId, input = {}) {
     const actor = access.actorContext(userId, input.teamId)
     const teamId = requiredText(input.teamId, '归属团队', 128)
@@ -23,12 +30,14 @@ export function createAttach({ db, statements, access, view, allowFileRemote }) 
     const displayName = requiredText(input.displayName || actor.user.displayName, '项目名称', 120)
     const developerId = optionalText(input.developerId || input.trellisDevId, 120)
     const localRepoKey = assertLocalRepoKey(input.localRepoKey)
+    const requestedWorktree = input.isWorktree === true
     const safeAgentId = requiredText(agentId, 'Agent ID', 128)
     if (!SAFE_ID.test(safeAgentId)) {
       throw teamError(400, ERROR_CODES.INVALID_INPUT, 'Agent ID 格式无效')
     }
 
-    return withTransaction(db, () => {
+    let worktreeMarkedSpaceId = null
+    const result = withTransaction(db, () => {
       const agent = statements.activeAgentDevice.get(safeAgentId)
       if (!agent || agent.user_id !== userId) {
         throw teamError(403, ERROR_CODES.FORBIDDEN, 'Agent 设备与当前账号不匹配')
@@ -94,12 +103,15 @@ export function createAttach({ db, statements, access, view, allowFileRemote }) 
         member = { ...member, trellis_dev_id: developerId, updated_at: now }
       }
 
+      const isBaseline = Boolean(project.baseline_branch && branchName === project.baseline_branch)
+      const desiredWorktree = requestedWorktree && !isBaseline ? 1 : 0
       let taskSpace = statements.taskSpaceByProjectBranch.get(project.id, branchName)
       if (!taskSpace) {
         taskSpace = {
           id: crypto.randomUUID(),
           project_id: project.id,
           branch_name: branchName,
+          is_worktree: desiredWorktree,
           status: 'active',
           revision: 0,
           indexed_revision: 0,
@@ -113,14 +125,58 @@ export function createAttach({ db, statements, access, view, allowFileRemote }) 
           taskSpace.id,
           project.id,
           branchName,
+          desiredWorktree,
           userId,
           safeAgentId,
           now,
           now,
         )
+      } else {
+        if (
+          taskSpace.retired_at &&
+          Number(taskSpace.is_worktree) === 1 &&
+          project.status === 'active'
+        ) {
+          statements.restoreTaskSpace.run(now, taskSpace.id, project.id)
+          taskSpace = {
+            ...taskSpace,
+            status: 'active',
+            retired_at: null,
+            retired_by_user_id: null,
+            retired_reason: null,
+            updated_at: now,
+          }
+          appendAuditEvent(db, {
+            actorUserId: userId,
+            actorAgentId: safeAgentId,
+            teamId: project.owner_team_id,
+            projectId: project.id,
+            action: 'task_space_restored',
+            targetType: 'task_space',
+            targetId: taskSpace.id,
+            detail: {
+              branchName,
+              autoRestoredWorktree: true,
+              isWorktree: desiredWorktree === 1,
+            },
+            occurredAt: now,
+          })
+        }
       }
       if (taskSpace.status === 'disabled' || taskSpace.retired_at || project.status !== 'active') {
         throw teamError(409, ERROR_CODES.PROJECT_NOT_READY, '项目或任务空间已停用')
+      }
+      if (desiredWorktree === 0 && Number(taskSpace.is_worktree) === 1) {
+        statements.updateTaskSpaceWorktree.run(0, now, taskSpace.id)
+        taskSpace = { ...taskSpace, is_worktree: 0, updated_at: now }
+      } else if (desiredWorktree === 1 && Number(taskSpace.is_worktree) === 0) {
+        const archiveState = statements.archiveSyncStateByTaskSpace.get(taskSpace.id)
+        if (!archiveState?.last_success_at) {
+          statements.updateTaskSpaceWorktree.run(1, now, taskSpace.id)
+          statements.resetArchiveSyncStateForWorktree.run(now, taskSpace.id)
+          taskSpace = { ...taskSpace, is_worktree: 1, updated_at: now }
+          worktreeMarkedSpaceId = taskSpace.id
+        }
       }
       const replacedBindings = statements.replacedBindings.all(
         safeAgentId,
@@ -213,6 +269,10 @@ export function createAttach({ db, statements, access, view, allowFileRemote }) 
         })),
       }
     })
+    if (worktreeMarkedSpaceId) {
+      onTaskSpaceWorktreeMarked?.(worktreeMarkedSpaceId)
+    }
+    return result
   }
 
   return { attach }

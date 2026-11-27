@@ -9,6 +9,7 @@ export const STATUS_LABELS: Record<string, string> = {
   stale: '索引落后',
   error: '同步失败',
   index_error: '索引失败',
+  worktree_skipped: 'Worktree · 免归档同步',
 }
 
 export const PROJECT_PREVIEW_LIMIT = 5

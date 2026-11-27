@@ -218,6 +218,7 @@ pub struct AttachOptions<'a> {
     pub display_name: Option<&'a str>,
     pub allow_file_remote: bool,
     pub require_pushed: bool,
+    pub is_worktree: bool,
     /// bootstrap / safe / review；None 视为 review（对照 JS 默认值）。
     pub initial_sync_mode: Option<&'a str>,
 }
@@ -238,6 +239,8 @@ pub struct AttachedProject {
 #[serde(rename_all = "camelCase")]
 pub struct AttachedTaskSpace {
     pub id: String,
+    #[serde(default)]
+    pub is_worktree: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -420,8 +423,7 @@ async fn append_gitignore_rules_at_end(
     let kept = if replace_equivalents {
         text.lines()
             .filter(|line| {
-                line.trim() != title
-                    && !normalized_rules.contains(&normalize_gitignore_rule(line))
+                line.trim() != title && !normalized_rules.contains(&normalize_gitignore_rule(line))
             })
             .collect()
     } else {
@@ -561,7 +563,11 @@ async fn apply_kit_overlay(
     }
 
     let python = recorded_python()
-        .or_else(|| std::env::var("TRELLIS_PYTHON").ok().filter(|value| !value.trim().is_empty()))
+        .or_else(|| {
+            std::env::var("TRELLIS_PYTHON")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
         .unwrap_or_else(|| "python".to_string());
     let repo = repo_path.to_string_lossy().to_string();
     let mut args = vec![
@@ -697,14 +703,13 @@ pub async fn initialize_project(
                 selected_spec = selection;
                 company_spec_outcome = outcome;
             }
-            let spec_init =
-                match (options.company_spec.as_ref(), selected_spec.as_ref()) {
-                    (Some(request), Some(selection)) => Some(CompanySpecInit {
-                        registry_url: &request.config.registry,
-                        template: &selection.template,
-                    }),
-                    _ => None,
-                };
+            let spec_init = match (options.company_spec.as_ref(), selected_spec.as_ref()) {
+                (Some(request), Some(selection)) => Some(CompanySpecInit {
+                    registry_url: &request.config.registry,
+                    template: &selection.template,
+                }),
+                _ => None,
+            };
             trellis_cli::initialize_trellis(
                 options.runtime,
                 &root,
@@ -719,8 +724,7 @@ pub async fn initialize_project(
                 match company_spec::verify(&root, selection) {
                     Ok(()) => outcome.applied = true,
                     Err(reason) => {
-                        outcome.warning =
-                            Some(format!("公司规范模板已下载但校验失败：{reason}"));
+                        outcome.warning = Some(format!("公司规范模板已下载但校验失败：{reason}"));
                     }
                 }
             }
@@ -1034,6 +1038,7 @@ pub async fn attach_project(
         "developerId": options.developer_id,
         "displayName": display_name,
         "localRepoKey": inspected.local_repo_key,
+        "isWorktree": options.is_worktree,
     });
     let payload = api
         .request_json(
@@ -1074,6 +1079,7 @@ pub async fn attach_project(
             .unwrap_or_else(|| inspected.repository_name.clone()),
         created_at: now_iso8601(),
         allow_file_remote: options.allow_file_remote,
+        is_worktree: options.is_worktree || attached.task_space.is_worktree,
         read_only: attached.binding.read_only == Some(true),
         sync_status: attached
             .binding
@@ -1117,6 +1123,59 @@ pub async fn attach_project(
         binding,
         inspected,
     })
+}
+
+/// 为存量已绑定的 worktree 幂等补标 `isWorktree: true`，不重置 `initial_sync_completed` 与 `tracked_task_dirs`。
+pub async fn mark_binding_worktree(
+    api: &ApiClient,
+    store: &ConfigStore,
+    binding: &AgentBinding,
+    hooks_dir: &Path,
+    team_id: &str,
+    developer_id: &str,
+    allow_file_remote: bool,
+) -> AgentResult<()> {
+    let inspected = inspect_project_with(
+        Path::new(&binding.repo_path),
+        hooks_dir,
+        allow_file_remote,
+        Some(&binding.branch_name),
+    )
+    .await?;
+    let body = json!({
+        "remoteUrl": inspected.remote_url,
+        "branchName": inspected.branch_name,
+        "teamId": team_id,
+        "developerId": developer_id,
+        "displayName": binding.display_name,
+        "localRepoKey": binding.local_repo_key,
+        "isWorktree": true,
+    });
+    api.request_json(
+        Method::POST,
+        "/api/agent/task-spaces/attach",
+        Some(&body),
+        ATTACH_TIMEOUT,
+    )
+    .await?;
+    let task_space_id = binding.task_space_id.clone();
+    store
+        .update_config(false, move |config| {
+            let Some(current) = config else {
+                return err(code::CONFIG_MISSING, "Agent 配置不存在");
+            };
+            let mut next = current.clone();
+            if let Some(target) = next
+                .bindings
+                .iter_mut()
+                .find(|item| item.task_space_id == task_space_id)
+            {
+                target.is_worktree = true;
+            }
+            Ok(Some(next))
+        })
+        .await?;
+    Ok(())
 }
 
 /// 对照 JS normalizeRemoteIdentity。

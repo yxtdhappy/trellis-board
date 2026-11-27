@@ -295,6 +295,14 @@ impl WorktreeService {
                     entry.task_space_id.as_deref() == Some(binding.task_space_id.as_str());
                 if entry.auto_managed && same_space {
                     entry.task_space_id = Some(binding.task_space_id.clone());
+                    if !binding.is_worktree && now >= entry.next_retry_at {
+                        if self
+                            .backfill_worktree_flag(&mut entry, binding, &info, config, hooks, now)
+                            .await
+                        {
+                            bindings_dirty = true;
+                        }
+                    }
                 } else {
                     entry.auto_managed = false;
                     entry.task_space_id = Some(binding.task_space_id.clone());
@@ -505,6 +513,7 @@ impl WorktreeService {
             display_name: None,
             allow_file_remote: config.allow_local_git_remotes,
             require_pushed: false,
+            is_worktree: true,
             initial_sync_mode: Some("safe"),
         };
         let result = onboarding::attach_project(&self.api, &self.store, &options).await;
@@ -578,6 +587,52 @@ impl WorktreeService {
             return;
         }
         self.sync_pending(entry, Utc::now().timestamp()).await;
+    }
+
+    async fn backfill_worktree_flag(
+        &self,
+        entry: &mut WorktreeEntry,
+        binding: &AgentBinding,
+        info: &DiscoveredWorktree,
+        config: &AgentConfig,
+        hooks: &Path,
+        now: i64,
+    ) -> bool {
+        let Some(team_id) = binding.team_id.as_deref().or(config.team_id.as_deref()) else {
+            return false;
+        };
+        let Some(developer_id) =
+            discovery::developer_id(Path::new(&entry.path), config, &info.remote_identity_key)
+                .await
+        else {
+            return false;
+        };
+        match onboarding::mark_binding_worktree(
+            &self.api,
+            &self.store,
+            binding,
+            hooks,
+            team_id,
+            &developer_id,
+            config.allow_local_git_remotes,
+        )
+        .await
+        {
+            Ok(()) => {
+                entry.attempts = 0;
+                entry.next_retry_at = 0;
+                true
+            }
+            Err(error) => {
+                entry.attempts = entry.attempts.saturating_add(1);
+                entry.next_retry_at = now + retry_delay(entry.attempts);
+                crate::logging::warn(&format!(
+                    "存量 worktree 补标失败（{}）：{}",
+                    binding.branch_name, error.message
+                ));
+                false
+            }
+        }
     }
 
     async fn sync_attached(&self, entry: &mut WorktreeEntry, tasks: &[LocalTask], now: i64) {
@@ -939,6 +994,7 @@ mod tests {
             display_name: "Repo".into(),
             created_at: "2026-11-20T00:00:00.000Z".into(),
             allow_file_remote: false,
+            is_worktree: true,
             read_only: false,
             sync_status: "approved".into(),
             detach_pending: false,

@@ -129,7 +129,7 @@ test('新库 schema v17 包含插件表并保留项目数据', () => {
       .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
       .get().value
     assert.equal(Number(version), DATABASE_SCHEMA_VERSION)
-    assert.equal(DATABASE_SCHEMA_VERSION, 18)
+    assert.equal(DATABASE_SCHEMA_VERSION, 19)
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all()
@@ -164,7 +164,7 @@ test('schema v17 重复打开幂等且版本保持 17', () => {
       .prepare("SELECT value FROM app_meta WHERE key = 'schema_version'")
       .get().value
     assert.equal(value, String(DATABASE_SCHEMA_VERSION))
-    assert.equal(value, '18')
+    assert.equal(value, '19')
     assert.equal(path.basename(workspace.databaseFile), 'board.sqlite')
   } finally {
     again.close()

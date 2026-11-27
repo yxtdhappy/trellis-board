@@ -72,7 +72,9 @@ export function createAgentRoutes(ctx) {
     const detachMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/detach$/)
     if (detachMatch && request.method === 'POST') {
       const body = await readJsonBody(request)
-      sendJson(response, 200, taskSpaces.detachAgent(agent, detachMatch[0], body))
+      const result = taskSpaces.detachAgent(agent, detachMatch[0], body)
+      if (result.taskSpaceRetired) boardEvents.publish({})
+      sendJson(response, 200, result)
       return true
     }
     const snapshotMatch = routeMatch(pathname, /^\/api\/agent\/task-spaces\/([^/]+)\/snapshot$/)

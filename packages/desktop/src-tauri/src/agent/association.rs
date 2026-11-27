@@ -116,6 +116,7 @@ pub async fn associate_desktop_project(
             display_name: params.display_name.as_deref(),
             allow_file_remote: config.allow_local_git_remotes,
             require_pushed: params.require_pushed,
+            is_worktree: false,
             initial_sync_mode: Some(mode.as_str()),
         },
     )

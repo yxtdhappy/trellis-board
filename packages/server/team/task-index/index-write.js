@@ -163,6 +163,7 @@ export function replaceIndexInTransaction(
       taskSpaceId: taskSpace.id,
       projectId: taskSpace.project_id,
       tasks: projectedTasks,
+      isWorktree: Boolean(latest.is_worktree),
     })
 
     const upsert = db.prepare(`

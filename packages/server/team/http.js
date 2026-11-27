@@ -423,6 +423,8 @@ export async function createTeamRuntime({
         publishBoardChanged: () => boardEvents.publish({}),
       },
     })
+    let taskSpaceIndex = null
+    let archiveGitSync = null
     const taskSpaces = createTaskSpaceService({
       db,
       config,
@@ -436,9 +438,12 @@ export async function createTeamRuntime({
           })
         }
       },
+      onTaskSpaceWorktreeMarked: (taskSpaceId) => {
+        archiveGitSync?.clearBackoff(taskSpaceId)
+        void taskSpaceIndex?.enqueue(taskSpaceId)
+      },
     })
     const taskControl = createTaskControlService({ db, logger })
-    let taskSpaceIndex = null
     taskCommands = createTaskCommandService({
       db,
       taskSpaces,
@@ -451,7 +456,6 @@ export async function createTeamRuntime({
         void taskSpaceIndex?.enqueue(taskSpaceId)
       },
     })
-    let archiveGitSync = null
     taskSpaceIndex = createTaskSpaceIndex({
       db,
       stageIds: STAGE_IDS,

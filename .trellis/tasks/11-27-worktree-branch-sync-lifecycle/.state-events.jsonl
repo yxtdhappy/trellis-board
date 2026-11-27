@@ -1,3 +1,4 @@
 {"actor": "flyfly6", "at": "2026-11-27T08:07:04+00:00", "event": "task_type_set", "from": "planning", "from_value": null, "schemaVersion": 1, "task_type": "complex", "to": "planning"}
 {"actor": "flyfly6", "at": "2026-11-27T08:41:55+00:00", "event": "status_transition", "from": "planning", "reason": "task.py start", "schemaVersion": 1, "to": "in_progress"}
 {"actor": null, "at": "2026-11-27T08:41:55+00:00", "event": "state_committed", "from": "in_progress", "reason": "task.py start --commit-state", "schemaVersion": 1, "to": "in_progress"}
+{"actor": "flyfly6", "at": "2026-11-27T11:10:08+00:00", "base": "95c29a204ec2a84bf17da64be2400acab370e9c6", "diff": "sha256:ec684c4a96ebe1a89c7371906fec9c329f85d1d0a5a5bef674a2772a139266f0", "event": "check_stamped", "from": "in_progress", "schemaVersion": 1, "scope": ["packages/server", "packages/desktop/src-tauri", "packages/web"], "to": "in_progress"}

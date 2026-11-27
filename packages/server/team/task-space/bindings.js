@@ -149,11 +149,50 @@ export function createBindings({ db, statements, access, view, now }) {
         },
         occurredAt: timestamp,
       })
+      let taskSpaceRetired = false
+      const isWorktreeSpace = Number(taskSpace.is_worktree) === 1
+      const isBaselineBranch = Boolean(
+        project.baseline_branch && taskSpace.branch_name === project.baseline_branch,
+      )
+      if (
+        isWorktreeSpace &&
+        !isBaselineBranch &&
+        !taskSpace.retired_at &&
+        taskSpace.status === 'active' &&
+        Number(statements.approvedBindingCount.get(spaceId)?.count || 0) === 0
+      ) {
+        statements.retireTaskSpace.run(
+          timestamp,
+          userId,
+          'worktree_deleted',
+          timestamp,
+          spaceId,
+          project.id,
+        )
+        statements.cancelCommandsForTaskSpace.run(timestamp, spaceId)
+        appendAuditEvent(db, {
+          actorUserId: userId,
+          actorAgentId: agentId,
+          teamId: project.owner_team_id,
+          projectId: project.id,
+          action: 'task_space_retired',
+          targetType: 'task_space',
+          targetId: spaceId,
+          detail: {
+            branchName: taskSpace.branch_name,
+            reason: 'worktree_deleted',
+            autoRetiredWorktree: true,
+          },
+          occurredAt: timestamp,
+        })
+        taskSpaceRetired = true
+      }
       return {
         detached: true,
         alreadyDetached: false,
         taskSpaceId: spaceId,
         bindingId: binding.id,
+        ...(taskSpaceRetired ? { taskSpaceRetired: true } : {}),
       }
     })
   }

@@ -53,6 +53,23 @@ fn detach_pending_defaults_false_and_round_trips() {
     assert!(pending.detach_pending);
 }
 
+#[test]
+fn is_worktree_defaults_false_and_round_trips() {
+    let binding = binding("local-1", "ts-1", false);
+    let mut value = serde_json::to_value(&binding).expect("serialize");
+    value
+        .as_object_mut()
+        .expect("binding object")
+        .remove("isWorktree");
+    let parsed: AgentBinding = serde_json::from_value(value).expect("deserialize");
+    assert!(!parsed.is_worktree);
+
+    let mut value = serde_json::to_value(&binding).expect("serialize");
+    value["isWorktree"] = serde_json::Value::Bool(true);
+    let worktree: AgentBinding = serde_json::from_value(value).expect("deserialize");
+    assert!(worktree.is_worktree);
+}
+
 fn binding(local_id: &str, task_space_id: &str, read_only: bool) -> AgentBinding {
     AgentBinding {
         local_id: local_id.into(),
@@ -68,6 +85,7 @@ fn binding(local_id: &str, task_space_id: &str, read_only: bool) -> AgentBinding
         display_name: "Repo".into(),
         created_at: "2026-11-12T00:00:00.000Z".into(),
         allow_file_remote: false,
+        is_worktree: false,
         read_only,
         sync_status: "approved".into(),
         detach_pending: false,

@@ -2,7 +2,7 @@ import { taskIdFromExecutionKey, text } from './shared.js'
 
 /** 索引/投影写入：把索引里的任务行收敛回控制面权威表。 */
 export function createProjection({ statements, leases, tasks, now = () => new Date() }) {
-  function reconcileProjection({ taskSpaceId, projectId, tasks: taskList }) {
+  function reconcileProjection({ taskSpaceId, projectId, tasks: taskList, isWorktree = false }) {
     const timestamp = now().toISOString()
     const project = statements.readProject.get(projectId)
     const taskGroups = new Map()
@@ -71,6 +71,37 @@ export function createProjection({ statements, leases, tasks, now = () => new Da
           task.relativeDir,
           timestamp,
           executionTaskKey,
+        )
+      }
+    }
+    if (isWorktree) {
+      const activeExecutionKeys = new Set()
+      for (const task of authoritativeTasks) {
+        if (task.archived) continue
+        const key = text(task.executionTaskKey || task.taskKey, 500)
+        if (key) activeExecutionKeys.add(key)
+      }
+      for (const row of statements.readSpaceTasks.all(taskSpaceId)) {
+        if (
+          row.archived ||
+          row.materialization_state !== 'materialized' ||
+          activeExecutionKeys.has(row.execution_task_key)
+        ) {
+          continue
+        }
+        statements.archiveProjectionTask.run(
+          row.task_key,
+          row.relative_dir,
+          timestamp,
+          timestamp,
+          row.execution_task_key,
+        )
+        leases.revokeLeases(row.execution_task_key, timestamp)
+        statements.resolveArchivedConflicts.run(
+          timestamp,
+          taskSpaceId,
+          row.relative_dir,
+          row.task_id,
         )
       }
     }

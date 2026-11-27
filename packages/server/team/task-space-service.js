@@ -14,6 +14,7 @@ export function createTaskSpaceService({
   staleMs = null,
   backupService = null,
   onTaskSpacePurged = null,
+  onTaskSpaceWorktreeMarked = null,
 }) {
   const allowFileRemote = allowedFileRemote === true || config?.allowLocalGitRemotes === true
   const configuredStaleMs = Number(staleMs ?? config.agentStaleMs ?? DEFAULT_LISTENER_STALE_MS)
@@ -24,7 +25,14 @@ export function createTaskSpaceService({
   const statements = createStatements(db)
   const view = createView({ statements, now, staleMs: effectiveStaleMs })
   const access = createAccess({ db, statements, view, allowFileRemote, now })
-  const attach = createAttach({ db, statements, access, view, allowFileRemote }).attach
+  const attach = createAttach({
+    db,
+    statements,
+    access,
+    view,
+    allowFileRemote,
+    onTaskSpaceWorktreeMarked,
+  }).attach
   const bindings = createBindings({ db, statements, access, view, now })
   const lifecycle = createLifecycle({
     db,

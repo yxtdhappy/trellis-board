@@ -80,6 +80,8 @@ pub struct AgentBinding {
     #[serde(default)]
     pub allow_file_remote: bool,
     #[serde(default)]
+    pub is_worktree: bool,
+    #[serde(default)]
     pub read_only: bool,
     pub sync_status: String,
     #[serde(default)]
@@ -247,6 +249,7 @@ fn validate_binding(binding: &AgentBinding, index: usize) -> AgentResult<AgentBi
         display_name: require_string(Some(&binding.display_name), "displayName", 255)?,
         created_at: require_string(Some(&binding.created_at), "createdAt", 64)?,
         allow_file_remote: binding.allow_file_remote,
+        is_worktree: binding.is_worktree,
         read_only: binding.read_only,
         sync_status: binding.sync_status.clone(),
         detach_pending: binding.detach_pending,

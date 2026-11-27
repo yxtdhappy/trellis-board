@@ -53,7 +53,7 @@ test('schema v17 新库包含团队任务、权威任务、租约、待归属摘
     legacyJsonImport: false,
   })
   try {
-    assert.equal(DATABASE_SCHEMA_VERSION, 18)
+    assert.equal(DATABASE_SCHEMA_VERSION, 19)
     const names = tableNames(db)
     for (const table of SYNC_TABLES) assert.ok(names.includes(table), `缺少 ${table}`)
     assert.ok(names.includes('team_project'))
@@ -192,11 +192,11 @@ test('v10 升级到 v17 补监听、弃用、权威任务和基线字段并保�
     )
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '18',
+      '19',
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v18.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v19.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -248,7 +248,7 @@ test('v10 升级到 v17 补监听、弃用、权威任务和基线字段并保�
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .filter((name) => name.startsWith('board.sqlite.pre-v18.')).length,
+        .filter((name) => name.startsWith('board.sqlite.pre-v19.')).length,
       1,
     )
     reopened.close()
@@ -320,7 +320,7 @@ test('v11 升级到 v17 只补弃用字段，历史 disabled 不自动变成 ret
     })
     assert.equal(
       reopened.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get().value,
-      '18',
+      '19',
     )
     const row = reopened
       .prepare(`
@@ -339,7 +339,7 @@ test('v11 升级到 v17 只补弃用字段，历史 disabled 不自动变成 ret
     )
     const backupName = fs
       .readdirSync(path.join(root, 'backups'))
-      .find((name) => name.startsWith('board.sqlite.pre-v18.'))
+      .find((name) => name.startsWith('board.sqlite.pre-v19.'))
     assert.ok(backupName)
     const backup = new DatabaseSync(path.join(root, 'backups', backupName))
     try {
@@ -394,9 +394,9 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     db.exec(`
       CREATE TRIGGER fail_v12_metadata
       BEFORE UPDATE ON app_meta
-      WHEN NEW.key = 'schema_version' AND NEW.value = '18'
+      WHEN NEW.key = 'schema_version' AND NEW.value = '19'
       BEGIN
-        SELECT RAISE(ABORT, 'v18 metadata blocked');
+        SELECT RAISE(ABORT, 'v19 metadata blocked');
       END;
     `)
     db.close()
@@ -409,7 +409,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
           importLegacyRepositories: false,
           legacyJsonImport: false,
         }),
-      /v18 metadata blocked/,
+      /v19 metadata blocked/,
     )
     const check = new DatabaseSync(databaseFile, { readOnly: true })
     try {
@@ -443,7 +443,7 @@ test('v12 迁移失败时监听、弃用列和 schema 版本一起回滚', () =>
     assert.equal(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v18.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v19.')),
       true,
     )
   } finally {
@@ -461,7 +461,7 @@ test('v9 升级到 v17 保留旧项目行并创建备份', () => {
     )
     assert.equal(child.status, 0, child.stderr || child.stdout)
     const result = JSON.parse(child.stdout)
-    assert.equal(result.schemaVersion, '18')
+    assert.equal(result.schemaVersion, '19')
     assert.equal(result.projectCount, 1)
     assert.equal(result.hasSyncProject, true)
     assert.ok(result.backupName)
@@ -598,7 +598,7 @@ test('v15 升级到 v17 回填活动/归档权威任务并选择归档最终状�
     assert.ok(
       fs
         .readdirSync(path.join(root, 'backups'))
-        .some((name) => name.startsWith('board.sqlite.pre-v18.')),
+        .some((name) => name.startsWith('board.sqlite.pre-v19.')),
     )
   } finally {
     reopened?.close()

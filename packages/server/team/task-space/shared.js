@@ -199,9 +199,24 @@ const STATEMENTS = {
   `,
   insertTaskSpace: `
     INSERT INTO sync_task_space(
-      id, project_id, branch_name, status, revision, indexed_revision,
+      id, project_id, branch_name, is_worktree, status, revision, indexed_revision,
       created_by_user_id, created_by_agent_id, created_at, updated_at
-    ) VALUES (?, ?, ?, 'active', 0, 0, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?)
+  `,
+  updateTaskSpaceWorktree: `
+    UPDATE sync_task_space
+    SET is_worktree = ?, updated_at = ?
+    WHERE id = ?
+  `,
+  archiveSyncStateByTaskSpace: `
+    SELECT last_success_at
+    FROM sync_archive_sync_state
+    WHERE task_space_id = ?
+  `,
+  resetArchiveSyncStateForWorktree: `
+    UPDATE sync_archive_sync_state
+    SET status = 'idle', last_error = NULL, updated_at = ?
+    WHERE task_space_id = ?
   `,
   replacedBindings: `
     SELECT id, task_space_id, branch_name

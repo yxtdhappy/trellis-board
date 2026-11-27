@@ -36,6 +36,7 @@ export function taskSpacePublic(row, actor, access, summary = null, stats = null
     projectId: row.project_id,
     branchName: row.branch_name,
     isBaseline: Boolean(row.baseline_branch && row.branch_name === row.baseline_branch),
+    isWorktree: Boolean(row.is_worktree),
     status: row.status,
     revision: Number(row.revision || 0),
     indexedRevision: Number(row.indexed_revision || 0),

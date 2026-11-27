@@ -87,9 +87,10 @@ export function createArchiveGitSyncService({
     `).run(taskSpaceId, timestamp)
   }
 
-  function activeTaskSpaces(taskSpaceId = null) {
+  function activeTaskSpaces(taskSpaceId = null, { includeWorktree = false } = {}) {
     const params = []
     const filter = taskSpaceId ? 'AND s.id = ?' : ''
+    const worktreeFilter = includeWorktree ? '' : 'AND COALESCE(s.is_worktree, 0) = 0'
     if (taskSpaceId) params.push(String(taskSpaceId))
     return db
       .prepare(`
@@ -101,6 +102,7 @@ export function createArchiveGitSyncService({
         WHERE s.status = 'active'
           AND s.retired_at IS NULL
           AND p.status = 'active'
+          ${worktreeFilter}
           ${filter}
         ORDER BY p.name COLLATE NOCASE, s.branch_name COLLATE NOCASE
       `)
@@ -549,8 +551,9 @@ export function createArchiveGitSyncService({
   function overview() {
     const credentialRows = credentials.list()
     const credentialsByOrigin = new Map(credentialRows.map((row) => [row.origin, row]))
-    const taskSpaces = activeTaskSpaces().map((space) => {
-      ensureState(space.id)
+    const taskSpaces = activeTaskSpaces(null, { includeWorktree: true }).map((space) => {
+      const isWorktree = Number(space.is_worktree) === 1
+      if (!isWorktree) ensureState(space.id)
       const state = db
         .prepare('SELECT * FROM sync_archive_sync_state WHERE task_space_id = ?')
         .get(space.id)
@@ -600,13 +603,14 @@ export function createArchiveGitSyncService({
         remoteUrl,
         origin,
         branchName: space.branch_name,
+        isWorktree,
         credentialState,
         credential,
-        status: state?.status || 'idle',
+        status: isWorktree ? 'worktree_skipped' : state?.status || 'idle',
         lastAttemptAt: state?.last_attempt_at || null,
         lastSuccessAt: state?.last_success_at || null,
         lastIndexedAt: state?.last_indexed_at || null,
-        lastError: state?.last_error || null,
+        lastError: isWorktree ? null : state?.last_error || null,
         remoteHead: state?.remote_head || null,
         fileCount: Number(state?.file_count || archiveStats.file_count || 0),
         byteCount: Number(state?.byte_count || archiveStats.byte_count || 0),
@@ -614,7 +618,7 @@ export function createArchiveGitSyncService({
         archiveIndexedRevision: Number(space.archive_indexed_revision || 0),
         failureCount,
         nextAttemptAt:
-          backoffUntil.get(space.id) == null
+          isWorktree || backoffUntil.get(space.id) == null
             ? null
             : new Date(Number(backoffUntil.get(space.id))).toISOString(),
       }
@@ -628,7 +632,7 @@ export function createArchiveGitSyncService({
 
   function listLogs(taskSpaceId, { beforeId = null, limit = 50 } = {}) {
     const id = String(taskSpaceId || '').trim()
-    const space = activeTaskSpaces(id)
+    const space = activeTaskSpaces(id, { includeWorktree: true })
     if (!space.length) throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在')
     const bounded = normalizedLimit(limit)
     const before =
@@ -669,13 +673,29 @@ export function createArchiveGitSyncService({
 
   async function runNow(taskSpaceId = null) {
     const requested = taskSpaceId == null ? '' : String(taskSpaceId).trim()
-    if (requested && !activeTaskSpaces(requested).length) {
-      throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在或不可同步')
+    let spaces
+    if (requested) {
+      const matched = activeTaskSpaces(requested, { includeWorktree: true })
+      if (!matched.length) {
+        throw teamError(404, ERROR_CODES.NOT_FOUND, '任务空间不存在或不可同步')
+      }
+      if (Number(matched[0].is_worktree) === 1) {
+        throw teamError(409, 'WORKTREE_ARCHIVE_SYNC_SKIPPED', 'Worktree 分支免远端归档同步')
+      }
+      spaces = matched
+    } else {
+      spaces = activeTaskSpaces(null)
     }
-    const spaces = activeTaskSpaces(requested || null)
     for (const space of spaces) backoffUntil.delete(space.id)
     for (const space of spaces) void runTaskSpace(space, { manual: true })
     return { queued: spaces.length }
+  }
+
+  function clearBackoff(taskSpaceId) {
+    const id = String(taskSpaceId || '').trim()
+    if (!id) return
+    backoffUntil.delete(id)
+    failureCounts.delete(id)
   }
 
   function onIndexProjected(payload) {
@@ -745,6 +765,7 @@ export function createArchiveGitSyncService({
     overview,
     updateConfig,
     runNow,
+    clearBackoff,
     listLogs,
     onIndexProjected,
     onIndexProjectionFailed,
