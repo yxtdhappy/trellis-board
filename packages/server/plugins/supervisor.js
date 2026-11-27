@@ -199,6 +199,7 @@ export class PluginSupervisor {
    *
    * - 运行中的插件配置变化：先 plugin/configure 热更新，入口/启动参数变化或热更新失败时重启子进程；
    * - 之前因缺 secret 没起来、现在补齐了：自动启动；
+   * - 开关从关到开时自动启动（配置重载本身不重启没有变化的进程）；
    * - 配置文件解析失败（权限不对、半截 JSON、version 缺失）：保留旧配置，只写审计告警。
    *
    * 手动 POST /api/plugins/reload 与调用方都走这里；并发调用复用同一个 promise。
@@ -392,7 +393,12 @@ export class PluginSupervisor {
       }
 
       const missingChanged = previous ? previous.missing !== state.missingSecrets.join(',') : false
-      if (!running && state.enabled && !state.manualStopped && (entryChanged || missingChanged)) {
+      if (
+        !running &&
+        state.enabled &&
+        !state.manualStopped &&
+        (enabledChanged || entryChanged || missingChanged)
+      ) {
         try {
           await this.startPlugin(id)
           result.started.push(id)

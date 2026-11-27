@@ -366,7 +366,7 @@ async fn ensure_agent_gitignore(repo_path: &Path, agent_tools: &[String]) -> Age
 /// `.template-hashes.json` 只描述本机磁盘状态，忽略后不再随仓库共享。
 async fn ensure_template_hashes_ignored(repo_path: &Path) -> AgentResult<()> {
     let rules = [TEMPLATE_HASHES_RULE.to_string()];
-    append_gitignore_rules_at_end(repo_path, LOCAL_STATE_TITLE, &rules).await
+    append_gitignore_rules_at_end(repo_path, LOCAL_STATE_TITLE, &rules, true).await
 }
 
 /// 用一键提交已有的固定路径生成反忽略规则，避免维护第二份共享路径清单。
@@ -385,14 +385,15 @@ fn shared_gitignore_rules() -> Vec<String> {
 
 async fn ensure_shared_gitignore_rules(repo_path: &Path) -> AgentResult<()> {
     let rules = shared_gitignore_rules();
-    append_gitignore_rules_at_end(repo_path, SHARED_GITIGNORE_TITLE, &rules).await
+    append_gitignore_rules_at_end(repo_path, SHARED_GITIGNORE_TITLE, &rules, false).await
 }
 
-/// 生成的规则必须位于用户规则之后；旧的受控小节也要整体移到末尾。
+/// 生成的规则必须位于用户规则之后；`replace_equivalents` 用于本机状态规则的全局去重。
 async fn append_gitignore_rules_at_end(
     repo_path: &Path,
     title: &str,
     rules: &[String],
+    replace_equivalents: bool,
 ) -> AgentResult<()> {
     let path = repo_path.join(".gitignore");
     let bytes = match tokio::fs::read(&path).await {
@@ -416,7 +417,16 @@ async fn append_gitignore_rules_at_end(
         .map(|rule| normalize_gitignore_rule(rule))
         .collect::<HashSet<_>>();
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let kept = without_managed_gitignore_section(&text, title, &normalized_rules);
+    let kept = if replace_equivalents {
+        text.lines()
+            .filter(|line| {
+                line.trim() != title
+                    && !normalized_rules.contains(&normalize_gitignore_rule(line))
+            })
+            .collect()
+    } else {
+        without_managed_gitignore_section(&text, title, &normalized_rules)
+    };
     let mut next = kept.join(newline);
     if !next.is_empty() && !next.ends_with('\n') {
         next.push_str(newline);

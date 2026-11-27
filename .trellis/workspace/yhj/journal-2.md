@@ -222,3 +222,74 @@ Board 工件预览的 CSP 增加 img-src 'self' http://witops.weintdata.cn，历
 
 - 部署后打开任务 11-26-B72369 的“工件查看 · WitOps 原文”，确认截图正常显示
 - 如后续需支持其他 WitOps 域名，另立需求，不改为动态 CSP
+
+
+## Session 88: 优化项目成员账号选择体验
+<!-- trellis-session: v=2 fp=7b39a1740ee115f3 -->
+
+**Date**: 2026-11-26
+**Task**: 优化项目成员账号选择体验
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+管理员可从 active 账号中选择项目成员并提交内部 UUID；保存后刷新权威成员列表；项目负责人保留手工 UUID 路径。完成 lint、类型检查、793 项测试、隔离浏览器 E2E 和用户服务端页面人工验收。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `45966b16e43e09570d0c3bc3ce71a94175281edf` | fix(web): improve project member account selection |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 89: 服务端项目移除功能收尾
+<!-- trellis-session: v=2 fp=e9fcc8b6c90dff61 -->
+
+**Date**: 2026-11-26
+**Task**: 服务端项目移除功能收尾
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+完成系统管理员永久移除项目：服务端级联清理与最多 5 份备份保留、Web 两步确认入口；本机 API/UI E2E、生产发布及实际删除核查通过。生产日志确认旧项目删除成功并生成备份，另发现 /files 路径未鉴权暴露数据库与日志的风险。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `339678492ea6438261a7ea9ed547f3b795db08a1` | feat(server): 支持永久移除项目 |
+| `74a5a4eb1b9d2b26a9ebbd50221fe044c66d864c` | feat(web): 增加系统管理员项目移除入口 |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 90: 修复初始化Git忽略规则兼容性
+<!-- trellis-session: v=2 fp=01692e75f3204978 -->
+
+**Date**: 2026-11-26
+**Task**: 修复初始化Git忽略规则兼容性
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+初始化与旧项目一键推送前自愈共享 Trellis 路径反忽略规则，保留用户规则和 CRLF，始终忽略 template hashes，并补充 Git 端到端回归测试及 CI 规则去重修复。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `23360f22f4f133251bd12a50636ca40c7184da3d` | fix-onboarding-compatible-strict-gitignore |
+| `f55c819f4c66a5d2eb86e739f9f559569e3b3886` | fix-onboarding-template-hash-dedupe |
+
+### Status
+
+[OK] **Completed**
