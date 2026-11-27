@@ -164,7 +164,11 @@
 - 跨插件 capability 的消费方用插件目录内的 `test/fixtures/<name>-caller/` 假插件（如
   `plugins/accounts-core/test/fixtures/accounts-caller/`、`plugins/jenkins-ops/test/fixtures/jenkins-caller/`）。
 - `packages/server/test/plugin-real-task.test.js` 跑真实 `.trellis/scripts/task.py`，验证宿主任务 façade 与脚本参数兼容。
-- 插件任务的宿主调用依赖 `python`；`packages/server/actions.js` 已回退到 `python3`，测试不需要注入 PATH shim。
+- 插件任务的宿主调用统一走 `packages/server/python.js` 的 `runPythonScript`：候选顺序为
+  `TRELLIS_PYTHON` → PATH 可执行文件 → Windows 常见安装目录 → `py -3`；spawn 失败
+  （`ENOENT` / `EACCES` / `EPERM` / `EFTYPE`）继续下一个候选，脚本退出码非 0 不重试。全部失败抛
+  `PYTHON_UNAVAILABLE = 1011`；插件下发失败的逐项结果保留该 `code`，面板据此回到运行环境门。
+  `packages/server/test/plugin-real-task.test.js` 有「坏解释器回退」用例，覆盖真实 task.py。
 - 断言插件状态要等“终态”，不要只等 `status`（重启期间状态可能仍是 `running`）。
 
 ### 7.1 面板在 sandbox iframe 里

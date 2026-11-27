@@ -512,3 +512,56 @@ fn sample_command() -> AgentCommand {
         payload: json!({ "taskSpaceId": "space-1", "title": "Fix it", "assigneeDevId": "dev" }),
     }
 }
+
+#[test]
+fn recorded_python_requires_non_empty_file() {
+    let root = std::env::temp_dir().join(format!(
+        "trellis-task-command-python-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).expect("temp root");
+    let python = root.join("python.exe");
+    std::fs::File::create(&python).expect("0 字节 flag");
+    let document = root.join("client.json");
+    std::fs::write(
+        &document,
+        json!({
+            "python_runtime": {
+                "version": "3.12.8",
+                "path": python.display().to_string(),
+                "source": "path",
+                "installed_at": "2026-11-27T00:00:00Z"
+            }
+        })
+        .to_string(),
+    )
+    .expect("client.json");
+
+    // Windows App Execution Alias 是 0 字节文件，不得作为解释器。
+    assert_eq!(recorded_python_from(&document), None);
+
+    std::fs::write(&python, b"python").expect("写入非空文件");
+    assert_eq!(
+        recorded_python_from(&document).as_deref(),
+        Some(python.to_string_lossy().as_ref())
+    );
+
+    // 目录不是可执行文件。
+    let directory = root.join("dir");
+    std::fs::create_dir_all(&directory).expect("temp dir");
+    std::fs::write(
+        &document,
+        json!({
+            "python_runtime": {
+                "version": "3.12.8",
+                "path": directory.display().to_string(),
+                "source": "path",
+                "installed_at": "2026-11-27T00:00:00Z"
+            }
+        })
+        .to_string(),
+    )
+    .expect("client.json");
+    assert_eq!(recorded_python_from(&document), None);
+    std::fs::remove_dir_all(&root).ok();
+}

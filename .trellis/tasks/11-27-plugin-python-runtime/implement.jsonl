@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/plugin-runtime.md","reason":"插件宿主与 task-service 的边界、任务写入口和既有 Python 说明（第 167 行需更正）"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"测试范围、真实服务验收与质量门要求"}
+{"file":".trellis/spec/guides/module-size-guide.md","reason":"server 源码 800 行上限与拆分约束，解析器扩展时需遵守"}
+{"file":".trellis/tasks/11-27-plugin-python-runtime/research/runtime-contract-digest.md","reason":"桌面 Python 自检契约、新增远程 Tauri 命令权限三件套与静态测试要求（避免大 spec 注入截断）"}
+{"file":".trellis/tasks/11-27-plugin-python-runtime/research/python-runtime-notes.md","reason":"本次故障的日志、调用链、检查通过但执行失败的根因与 Linux 复现场景"}

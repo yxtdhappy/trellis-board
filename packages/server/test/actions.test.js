@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { PYTHON_UNAVAILABLE } from '../python.js'
 
 test('创建任务会拒绝空标题', async () => {
   const { createTask } = await import('../actions.js')
@@ -217,6 +218,39 @@ test('task.py 支持 --work-type 时创建任务照旧传该参数', { skip: !ha
   )
   const argv = readStubArgv(root)
   assert.deepEqual(argv.slice(-2), ['--work-type', 'backend'])
+})
+
+test('createTask 把注入的 env 透传给 Python 解析器', { skip: !hasPython3() }, async () => {
+  const { createTask } = await import('../actions.js')
+  const root = makeStubRepo({ supportsWorkType: false })
+  const listRepositories = () => [{ id: 'repo', name: 'repo', path: root }]
+  const input = {
+    repositoryId: 'repo',
+    title: 'probe task',
+    description: 'probe',
+    assignee: 'alice',
+    priority: 'P2',
+    slug: 'probe-task',
+  }
+
+  // 注入空 PATH：解析器必须用注入的 env 而不是 process.env，否则会用宿主环境里的 Python。
+  const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-actions-empty-path-'))
+  const error = await createTask(input, {
+    listRepositories,
+    env: { PATH: emptyPath, SystemRoot: '', TRELLIS_PYTHON: '' },
+  }).then(
+    () => null,
+    (thrown) => thrown,
+  )
+  assert.equal(error?.code, PYTHON_UNAVAILABLE)
+  assert.equal(
+    fs.existsSync(path.join(root, '.trellis', 'scripts', 'argv.json')),
+    false,
+    '解释器不可用时不应执行 task.py',
+  )
+
+  await createTask(input, { listRepositories, env: process.env })
+  assert.deepEqual(readStubArgv(root).slice(0, 2), ['create', 'probe task'])
 })
 
 function hasGit() {

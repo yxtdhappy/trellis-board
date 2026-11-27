@@ -324,7 +324,7 @@ pub(super) fn python_dirs() -> Vec<PathBuf> {
 
 /// 0 字节文件是 Windows App Execution Alias（例如未安装 Store 版 Python 时的
 /// `WindowsApps\python.exe`），执行不了；不能当作可用解释器/工具。
-pub(super) fn is_usable_file(path: &Path) -> bool {
+pub(crate) fn is_usable_file(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|meta| meta.is_file() && meta.len() > 0)
         .unwrap_or(false)
@@ -731,27 +731,65 @@ pub(super) async fn py_launcher_target() -> Option<(PathBuf, String)> {
     Some((executable, version))
 }
 
+/// 已记录 flag 的探测结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RecordedPythonProbe {
+    Ready,
+    Outdated,
+    Stale,
+}
+
+/// 文件不可用（被删/0 字节）或跑不出版本都算坏 flag，必须清空后重新探测；
+/// 版本过低保留 flag，仅用于 `found_version` 文案。
+pub(super) fn classify_recorded_python(usable: bool, version: Option<&str>) -> RecordedPythonProbe {
+    if !usable {
+        return RecordedPythonProbe::Stale;
+    }
+    match version {
+        None => RecordedPythonProbe::Stale,
+        Some(version) if is_version_at_least(version, PYTHON_MIN_VERSION) => {
+            RecordedPythonProbe::Ready
+        }
+        Some(_) => RecordedPythonProbe::Outdated,
+    }
+}
+
+/// 试跑 flag 记录的解释器；坏 flag 就地清空并返回 `None`，让调用方继续探测。
+pub(super) async fn probe_recorded_python<C: ClientConfigLike>(
+    config: &mut C,
+) -> Option<PythonStatus> {
+    let flag = config.python_runtime()?;
+    let executable = PathBuf::from(&flag.path);
+    let source = if flag.source.is_empty() {
+        "client"
+    } else {
+        flag.source.as_str()
+    };
+    let usable = is_usable_file(&executable);
+    let version = if usable {
+        python_version_at(&executable, &[]).await
+    } else {
+        None
+    };
+    match classify_recorded_python(usable, version.as_deref()) {
+        RecordedPythonProbe::Stale => {
+            // flag 失效（文件被删/0 字节/执行失败）→ 清空后重新探测，自愈。
+            config.set_python_runtime(None);
+            None
+        }
+        RecordedPythonProbe::Ready | RecordedPythonProbe::Outdated => {
+            version.map(|version| python_status(&version, &executable, source))
+        }
+    }
+}
+
 pub(super) async fn resolve_python<C: ClientConfigLike>(config: &mut C) -> PythonStatus {
     let mut outdated: Option<PythonStatus> = None;
-    if let Some(flag) = config.python_runtime() {
-        let executable = PathBuf::from(&flag.path);
-        let source = if flag.source.is_empty() {
-            "client"
-        } else {
-            flag.source.as_str()
-        };
-        if is_usable_file(&executable) {
-            match python_version_at(&executable, &[]).await {
-                Some(version) if is_version_at_least(&version, PYTHON_MIN_VERSION) => {
-                    return python_status(&version, &executable, source);
-                }
-                Some(version) => outdated = Some(python_status(&version, &executable, source)),
-                None => {}
-            }
-        } else {
-            // flag 失效（文件被删/换机器）→ 清空后重新探测，自愈。
-            config.set_python_runtime(None);
+    if let Some(status) = probe_recorded_python(config).await {
+        if status.ok {
+            return status;
         }
+        outdated = Some(status);
     }
 
     let mut candidates: Vec<(PathBuf, &'static str)> = Vec::new();

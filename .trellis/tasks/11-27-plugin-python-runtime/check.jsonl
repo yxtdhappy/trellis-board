@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"质量门与测试范围，检查实现是否覆盖 server/plugin/web/rust 验证"}
+{"file":".trellis/spec/backend/plugin-runtime.md","reason":"插件 RPC 错误码、任务写入边界与 Python 解析契约的检查依据"}
+{"file":".trellis/tasks/11-27-plugin-python-runtime/research/runtime-contract-digest.md","reason":"核对 Rust 自检候选顺序、client.json flag 与新增命令权限/静态测试的契约是否一致"}
+{"file":".trellis/tasks/11-27-plugin-python-runtime/research/python-runtime-notes.md","reason":"复核修复是否真正覆盖 EACCES/0 字节别名与两套解析器不一致的根因"}

@@ -26,6 +26,11 @@ description = "当前已登录 Board 可下载、校验并安装客户端更新�
 commands.allow = ["update_apply"]
 
 [[permission]]
+identifier = "allow-runtime-open-gate"
+description = "当前 Board origin 可请求回到本地运行环境门，只做导航不清会话。"
+commands.allow = ["runtime_open_gate"]
+
+[[permission]]
 identifier = "allow-desktop-login"
 description = "仅本地登录页向进程内 Agent 提交账号密码。"
 commands.allow = ["desktop_login"]

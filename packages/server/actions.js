@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFileSync, spawn } from 'node:child_process'
-import { pythonCommandCandidates } from './python.js'
+import { execFileSync } from 'node:child_process'
+import { runPythonScript } from './python.js'
 import { getRepositories } from './repositories.js'
 import { slugifyTaskTitle, TASK_SLUG_PATTERN } from '@trellis-board/shared/slug.js'
 import { isWorkType, WORK_TYPE_IDS } from '@trellis-board/shared/work-types.js'
@@ -115,49 +115,16 @@ export function stampCreatedTaskBranch(repoPath, taskDir, branch) {
   }
 }
 
-function runTaskPython(repoPath, args) {
+function runTaskPython(repoPath, args, env) {
   const script = path.join(repoPath, '.trellis', 'scripts', 'task.py')
   if (!fs.existsSync(script)) throw new Error('仓库没有 .trellis/scripts/task.py')
-  return new Promise((resolve, reject) => {
-    const candidates = pythonCommandCandidates(process.env)
-    let index = 0
-    const attempt = () => {
-      const command = candidates[index]
-      const child = spawn(command, [script, ...args], {
-        cwd: repoPath,
-        windowsHide: true,
-        shell: false,
-        env: { ...process.env, PYTHONUTF8: '1' },
-      })
-      let stdout = ''
-      let stderr = ''
-      let failed = false
-      child.stdout.on('data', (chunk) => {
-        stdout += chunk.toString()
-      })
-      child.stderr.on('data', (chunk) => {
-        stderr += chunk.toString()
-      })
-      child.on('error', (error) => {
-        failed = true
-        if (error.code === 'ENOENT' && index + 1 < candidates.length) {
-          index += 1
-          attempt()
-          return
-        }
-        reject(error)
-      })
-      child.on('close', (code) => {
-        if (failed) return
-        if (code === 0) resolve({ stdout, stderr })
-        else reject(new Error(stderr.trim() || stdout.trim() || `task.py 退出码 ${code}`))
-      })
-    }
-    attempt()
-  })
+  return runPythonScript(script, args, { cwd: repoPath, env })
 }
 
-export async function createTask(input, { listRepositories = getRepositories } = {}) {
+export async function createTask(
+  input,
+  { listRepositories = getRepositories, env = process.env } = {},
+) {
   const repositoryId = cleanText(input.repositoryId, '仓库', 200)
   const title = cleanText(input.title, '任务标题', 200)
   const description = cleanText(input.description, '任务描述', 3000)
@@ -222,7 +189,7 @@ export async function createTask(input, { listRepositories = getRepositories } =
   if (input.baseBranch) args.push('--base-branch', cleanText(input.baseBranch, '目标分支', 200))
   if (input.packageName) args.push('--package', cleanText(input.packageName, '包名', 100))
 
-  const output = await runTaskPython(repo.path, args)
+  const output = await runTaskPython(repo.path, args, env)
   const createdDir = findCreatedTaskDir(repo.path, slug, output.stdout)
   stampCreatedTaskBranch(repo.path, createdDir, readCheckedOutBranch(repo.path))
   return { repository: repo, output }

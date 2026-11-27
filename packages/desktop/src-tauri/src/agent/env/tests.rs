@@ -463,3 +463,54 @@ fn value_config_reads_and_clears_flags() {
     config.set_python_runtime(None);
     assert!(config.get("python_runtime").is_none());
 }
+
+fn python_flag_json(path: &Path) -> Value {
+    json!({
+        "version": "3.12.8",
+        "path": path.display().to_string(),
+        "source": "path",
+        "installed_at": "2026-11-27T00:00:00Z"
+    })
+}
+
+#[test]
+fn recorded_python_probe_classifies_flag_state() {
+    assert_eq!(
+        classify_recorded_python(false, None),
+        RecordedPythonProbe::Stale
+    );
+    assert_eq!(
+        classify_recorded_python(true, None),
+        RecordedPythonProbe::Stale
+    );
+    assert_eq!(
+        classify_recorded_python(true, Some("3.8.10")),
+        RecordedPythonProbe::Outdated
+    );
+    assert_eq!(
+        classify_recorded_python(true, Some("3.12.8")),
+        RecordedPythonProbe::Ready
+    );
+}
+
+#[tokio::test]
+async fn recorded_python_flag_with_empty_file_is_cleared() {
+    let dir = temp_dir("python-flag-empty");
+    let executable = dir.join("python.exe");
+    std::fs::File::create(&executable).expect("创建 0 字节文件");
+    let mut config = json!({ "python_runtime": python_flag_json(&executable) });
+    assert!(probe_recorded_python(&mut config).await.is_none());
+    assert!(config.python_runtime().is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn recorded_python_flag_that_fails_to_run_is_cleared() {
+    let dir = temp_dir("python-flag-broken");
+    let executable = dir.join("python.exe");
+    std::fs::write(&executable, b"not a python interpreter").expect("写入坏解释器");
+    let mut config = json!({ "python_runtime": python_flag_json(&executable) });
+    assert!(probe_recorded_python(&mut config).await.is_none());
+    assert!(config.python_runtime().is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}

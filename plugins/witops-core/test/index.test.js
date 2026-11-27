@@ -13,7 +13,7 @@ import {
 } from './fixtures/witops-fixture.js'
 import { htmlToMarkdown, safeHtmlToMarkdown, validateMarkdown } from '../html-to-markdown.js'
 import { buildTaskDraft, resolveAssignee, workTypeFromCategory } from '../mapper.js'
-import { describeTaskError } from '../dispatch.js'
+import { describeTaskError, failureResult } from '../dispatch.js'
 import { createWitopsClient } from '../witops-client.js'
 
 const PLUGIN_ID = 'witops-core'
@@ -114,6 +114,29 @@ test('宿主 stderr 优先暴露 error 行，不把 usage 当原因', () => {
     describeTaskError('Task already exists: 2026-11-25-probe', 'fallback-slug'),
     /2026-11-25-probe/,
   )
+})
+
+test('下发失败保留应用错误码，用于面板回到环境门', () => {
+  assert.deepEqual(
+    failureResult(Object.assign(new Error('x'), { code: 1011 }), 'spawn python EACCES'),
+    {
+      status: 'failed',
+      reason: 'spawn python EACCES',
+      code: 1011,
+    },
+  )
+  assert.deepEqual(failureResult(new Error('x'), '普通失败'), {
+    status: 'failed',
+    reason: '普通失败',
+  })
+  assert.deepEqual(failureResult({ code: -32603 }, 'RPC 内部错误'), {
+    status: 'failed',
+    reason: 'RPC 内部错误',
+  })
+  assert.deepEqual(failureResult({ code: 'EACCES' }, 'spawn EACCES'), {
+    status: 'failed',
+    reason: 'spawn EACCES',
+  })
 })
 
 test('HTML 转换：标题、列表、表格表头、围栏与实体', () => {

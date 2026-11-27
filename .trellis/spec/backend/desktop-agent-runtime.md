@@ -176,6 +176,8 @@
   （`%LOCALAPPDATA%\Programs\Python\Python*`、`%ProgramFiles%\Python*`、`%SystemDrive%\Python*`）→
   `py -3`（用 `py -3 -c "import sys; print(sys.executable)"` 解析出真实解释器）。
   0 字节文件（Windows App Execution Alias）不得作为可执行文件；flag 版本过低时必须继续探测其它候选。
+  flag 文件可用但实际执行失败（版本探测返回空）时，清空 flag 后继续探测；只有版本过低才保留
+  旧 flag 用于 `found_version` 文案。
   探测成功后写回 flag，Agent 只认 flag；客户端私有前缀解析成功时同样写回 `trellis_runtime`。
 - 手动兜底 `runtime_set_node_path`：接受 `node.exe` 或它所在目录（去首尾引号，不展开 `~`/环境变量），
   必须存在、可执行且 ≥ 18.17.0，成功写 `node_runtime`（`source: "manual"`），失败返回
@@ -200,8 +202,19 @@
   `python:install` 靠 5 秒心跳续期进度。
 - 初始化项目必须使用环境门确定的 `node.exe` 与 `cli.js`，不得回退到任意系统 `node`。
 - 运行期只有 `task.py create` 与 `task.py set-branch`（含同步时的分支推断/冲突决策）需要 Python；
-  候选顺序是 `TRELLIS_PYTHON` → `client.json` 的 `python_runtime.path` → `python` → `py -3`，
-  只有 spawn 失败才继续下一个候选。
+  Rust 候选顺序是 `TRELLIS_PYTHON` → `client.json` 的 `python_runtime.path`（必须是大于 0 字节的
+  普通文件）→ `python` → `python3` → `py -3`，只有 spawn 失败才继续下一个候选。
+- 插件宿主 `plugin_host::ensure_running` 在父进程未设置 `TRELLIS_PYTHON` 时，把
+  `client.json` 的 `python_runtime.path` 注入宿主环境；父进程显式值优先。宿主 Node 侧
+  `packages/server/python.js` 的候选顺序是 `TRELLIS_PYTHON` → PATH 里的绝对路径（Windows 只认
+  `python.exe` / `python3.exe`）→ Windows 常见安装目录 → `py -3` 反解 → 裸 `python3` / `python`。
+  `py -3` 与裸名字仅当前面都没解析出可用文件时才加入，避免每次解析都同步拉起 `py.exe`；
+  PATH 与安装目录候选项必须是大于 0 字节的可执行文件；
+  `TRELLIS_PYTHON` 允许是名字，`ENOENT` / `EACCES` / `EPERM` / `EFTYPE` 时继续下一个候选；全部失败抛
+  `PYTHON_UNAVAILABLE = 1011`。
+- Board 面板收到 `code = 1011` 时提示「本地 Python 运行环境不可用 / 检查运行环境」，
+  调用 `runtime_open_gate` 回到本地环境门；该命令只做导航，不清会话、不清保存密码，且只对
+  `board-local-association` capability 开放。
 
 ## 4. 文件与路径安全
 
