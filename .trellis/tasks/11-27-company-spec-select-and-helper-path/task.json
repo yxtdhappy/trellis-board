@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "ee7491c553fcff9c3230a02ad67b9cf7113f12fd",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,25 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
-    "task_type_updated_at": "2026-11-27T14:31:34"
+    "task_type_updated_at": "2026-11-27T14:31:34",
+    "check_binding": {
+      "commit": "ee7491c553fcff9c3230a02ad67b9cf7113f12fd",
+      "base": "d0ef9253cae91c6e5a18177cee8087c4a082aea5",
+      "scope": [
+        "packages/web/src/lib/company-spec.js",
+        "packages/web/src/lib/company-spec.d.ts",
+        "packages/web/src/features/board/dialogs/CompanySpecDialog.tsx",
+        "packages/web/src/features/board/dialogs/ProjectOnboardingDialog.tsx",
+        "packages/web/test/company-spec.test.js",
+        "trellis-kit/features/company-spec/apply.mjs",
+        "scripts/test/company-spec.test.js"
+      ],
+      "diff": "sha256:b3a649910d0f4488deab8e91674d1c9f5b529ce81c1d02d9f9da5cfe3c3a770c",
+      "report_sha256": "6c08cbfca104d6431781b22fdafc38e150c5c8e4a4c8ea5df8013117065ff184"
+    },
+    "commits": [
+      "ee7491c553fcff9c3230a02ad67b9cf7113f12fd"
+    ],
+    "commit_set_at": "2026-11-27T15:06:59"
   }
 }
