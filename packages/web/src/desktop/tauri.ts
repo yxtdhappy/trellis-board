@@ -23,6 +23,8 @@ const LOCAL_TOKEN = (import.meta.env.VITE_LOCAL_AGENT_TOKEN as string | undefine
 const hasTauri = typeof window !== 'undefined' && Boolean(window.__TAURI__?.core?.invoke)
 const bridgeEnabled = !hasTauri && LOCAL_BASE !== ''
 export const localBridgeEnabled = bridgeEnabled
+/** 是否运行在桌面 EXE 的 WebView 里（原生 Tauri IPC 可用）。 */
+export const isNativeTauri = hasTauri
 
 async function bridgeInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${LOCAL_BASE}/invoke`, {

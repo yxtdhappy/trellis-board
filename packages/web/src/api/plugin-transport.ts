@@ -1,4 +1,4 @@
-import { invoke } from '@/desktop/tauri'
+import { invoke, isNativeTauri } from '@/desktop/tauri'
 import { resolveRuntimeRole } from '@/lib/role'
 import type {
   DesktopPanel,
@@ -12,6 +12,8 @@ import type {
  *
  * - 桌面 EXE：走 Tauri IPC（`window.__TAURI__.core.invoke`）。
  * - 浏览器里的客户端页面：走 Vite 代理 `/local-plugin` 到本机 host.mjs。
+ * 判据必须是「是否原生 Tauri」而不是「transport 是否有 invoke」：桥模式虽然也有
+ * `invoke`，但插件宿主是独立进程，能力来自 `/local-plugin` 的 HTTP 接口。
  * - 服务端页面：两者都没有，调用方不应触发这里。
  *
  * HTTP 模式下 token/secret 来自 dev 脚本注入的 `VITE_LOCAL_PLUGIN_*`，
@@ -26,7 +28,7 @@ function injectedRole(): string | undefined {
 }
 
 export function pluginTransportAvailable(): boolean {
-  if (invoke) return true
+  if (isNativeTauri) return true
   return resolveRuntimeRole({ injected: injectedRole() }) === 'client'
 }
 
@@ -52,12 +54,12 @@ async function httpJson<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function listPlugins(): Promise<DesktopPluginsState> {
-  if (invoke) return invoke<DesktopPluginsState>('desktop_plugins_list')
+  if (isNativeTauri && invoke) return invoke<DesktopPluginsState>('desktop_plugins_list')
   return httpJson<DesktopPluginsState>('/internal/plugins')
 }
 
 export async function setPluginEnabled(id: string, enabled: boolean): Promise<unknown> {
-  if (invoke) return invoke('desktop_plugin_set_enabled', { pluginId: id, enabled })
+  if (isNativeTauri && invoke) return invoke('desktop_plugin_set_enabled', { pluginId: id, enabled })
   return httpJson(`/internal/plugins/${encodeURIComponent(id)}/enabled`, {
     method: 'POST',
     body: JSON.stringify({ enabled }),
@@ -65,7 +67,7 @@ export async function setPluginEnabled(id: string, enabled: boolean): Promise<un
 }
 
 export async function reorderPlugins(ids: string[]): Promise<unknown> {
-  if (invoke) return invoke('desktop_plugin_reorder', { ids })
+  if (isNativeTauri && invoke) return invoke('desktop_plugin_reorder', { ids })
   return httpJson('/internal/plugins/order', {
     method: 'POST',
     body: JSON.stringify({ ids }),
@@ -73,7 +75,7 @@ export async function reorderPlugins(ids: string[]): Promise<unknown> {
 }
 
 export async function pluginLogs(id: string, tail = 200): Promise<DesktopPluginLogEntry[]> {
-  if (invoke) {
+  if (isNativeTauri && invoke) {
     const result = await invoke<{ entries?: DesktopPluginLogEntry[] }>('desktop_plugin_logs', {
       pluginId: id,
       tail,
@@ -87,7 +89,7 @@ export async function pluginLogs(id: string, tail = 200): Promise<DesktopPluginL
 }
 
 export async function listPanels(): Promise<DesktopPanel[]> {
-  if (invoke) {
+  if (isNativeTauri && invoke) {
     const result = await invoke<{ panels?: DesktopPanel[]; running?: boolean }>(
       'desktop_plugin_panels',
     )
@@ -112,7 +114,7 @@ export async function requestPlugin(
   path: string,
   body?: unknown,
 ): Promise<DesktopPluginResponse> {
-  if (invoke) {
+  if (isNativeTauri && invoke) {
     return invoke<DesktopPluginResponse>('desktop_plugin_request', {
       pluginId: id,
       method,
@@ -130,6 +132,6 @@ export async function pluginAsset(
   id: string,
   path: string,
 ): Promise<{ status: number; contentType?: string; content: string }> {
-  if (invoke) return invoke('desktop_plugin_asset', { pluginId: id, path })
+  if (isNativeTauri && invoke) return invoke('desktop_plugin_asset', { pluginId: id, path })
   return httpJson(`/internal/plugins/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`)
 }
