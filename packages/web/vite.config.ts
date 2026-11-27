@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { injectAppNameHtml } from './vite-app-name.ts'
+import { remoteTeamProxyHeaders } from './vite-remote-proxy.ts'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const devPort = Number(process.env.VITE_DEV_PORT || 5173)
@@ -14,7 +15,7 @@ const localPluginTarget =
 
 export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss(), injectAppNameHtml()],
+  plugins: [react(), tailwindcss(), injectAppNameHtml(), remoteTeamProxyHeaders()],
   // 多个 dev server 共用 node_modules/.vite 会互相失效依赖优化（504 Outdated Optimize Dep）
   cacheDir: process.env.VITE_CACHE_DIR || 'node_modules/.vite',
   resolve: {
