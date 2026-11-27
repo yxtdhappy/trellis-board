@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "team-board",
   "worktree_path": null,
-  "commit": null,
+  "commit": "20a5c21c359684965aea5b48bdf437b5d7ad3d43",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,6 +25,24 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "label_source": "user-explicit"
+    "label_source": "user-explicit",
+    "check_binding": {
+      "commit": "20a5c21c359684965aea5b48bdf437b5d7ad3d43",
+      "base": "495a71b031b014431f4271718b888cd8c308d09b",
+      "scope": [
+        "packages/server",
+        "packages/desktop/src-tauri",
+        "packages/desktop/test",
+        "packages/web/src/features/plugins",
+        "packages/web/test",
+        ".trellis/spec/backend"
+      ],
+      "diff": "sha256:59c3650da213dfbd6300eb140c56c4c893266795233ef482ad225923f2d3749e",
+      "report_sha256": "86e36a8f0f8199ae6527f521b5e43ee9c6aac1c597db03c00c15fd4178277aa2"
+    },
+    "commits": [
+      "20a5c21c359684965aea5b48bdf437b5d7ad3d43"
+    ],
+    "commit_set_at": "2026-11-27T17:47:06"
   }
 }
