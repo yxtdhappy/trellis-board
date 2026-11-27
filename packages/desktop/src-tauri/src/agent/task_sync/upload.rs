@@ -665,7 +665,7 @@ impl TaskSync {
         mode: UploadMode,
     ) -> AgentResult<Value> {
         let task_space_id = binding.task_space_id.clone();
-        let (fence, upload_execution_task_key) = match self
+        let (mut fence, upload_execution_task_key) = match self
             .acquire_upload_fence(binding, &batch.files, true)
             .await?
         {
@@ -752,6 +752,7 @@ impl TaskSync {
         }
         let mut active_sequence = batch.client_sequence;
         let mut sequence_recovered = false;
+        let mut version_recovered = false;
         let mut retry_delay = Duration::ZERO;
         let mut attempt = 0u32;
         let result = loop {
@@ -799,6 +800,46 @@ impl TaskSync {
                         "message": error.message,
                         "details": error.details,
                     });
+                }
+                Err(error) if error.server_code.as_deref() == Some("TASK_VERSION_STALE") => {
+                    // 同一任务空间可能被多台设备同时同步：本地任务版本落后时，
+                    // 重新认领拿到新版本后重试一次，仍失败就按跳过处理，避免整空间报错。
+                    let Some(key) = upload_execution_task_key.as_ref() else {
+                        break json!({
+                            "skipped": true,
+                            "reason": "TASK_VERSION_STALE",
+                            "message": error.message,
+                        });
+                    };
+                    if version_recovered {
+                        break json!({
+                            "skipped": true,
+                            "reason": "TASK_VERSION_STALE",
+                            "message": error.message,
+                            "details": error.details,
+                        });
+                    }
+                    match self.claim_remote_task(binding, key).await {
+                        Ok((claimed, lease_token)) => {
+                            version_recovered = true;
+                            fence = Some(UploadFence {
+                                task_version: claimed.task_version,
+                                lease_token,
+                            });
+                            crate::logging::warn(&format!(
+                                "上传任务版本落后，已重新认领并重试 {}",
+                                batch.batch_id
+                            ));
+                        }
+                        Err(error) => {
+                            break json!({
+                                "skipped": true,
+                                "reason": "TASK_VERSION_STALE",
+                                "message": error.message,
+                                "details": error.details,
+                            });
+                        }
+                    }
                 }
                 Err(error) if error.status == Some(429) && error.retryable => {
                     if attempt >= MAX_RATE_LIMIT_RETRIES {

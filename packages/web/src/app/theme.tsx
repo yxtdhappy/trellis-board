@@ -15,6 +15,7 @@ import {
   resolveTheme,
 } from '@/lib/appearance.js'
 import type { FontSize, NotifyMode, ThemePreference } from '@/lib/appearance.js'
+import { invoke as transportInvoke } from '@/desktop/tauri'
 
 type AppearanceContextValue = {
   theme: ThemePreference
@@ -57,9 +58,9 @@ function readSystemDark(): boolean {
 type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 // 桌面客户端内 localStorage 按 origin 隔离，设备偏好改由客户端主进程落盘。
+// 浏览器客户端页面走 `@/desktop/tauri` 的传输层（Tauri IPC 或本机 headless 桥）。
 function desktopInvoke(): DesktopInvoke | undefined {
-  const invoke = typeof window === 'undefined' ? undefined : window.__TAURI__?.core?.invoke
-  return typeof invoke === 'function' ? invoke : undefined
+  return transportInvoke
 }
 
 function readDesktopAppearance(value: unknown): {

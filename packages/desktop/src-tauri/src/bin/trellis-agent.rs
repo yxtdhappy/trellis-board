@@ -11,6 +11,8 @@
 
 #[path = "../agent/mod.rs"]
 mod agent;
+#[path = "../bridge.rs"]
+mod bridge;
 #[path = "../config.rs"]
 mod config;
 #[path = "../logging.rs"]
@@ -47,6 +49,9 @@ trellis-agent —— headless Trellis Board Agent
   trellis-agent associate --path REPO --branch BRANCH --team TEAM --developer DEV
                           [--display-name N] [--initial-mode safe|bootstrap|review] [--require-pushed]
   trellis-agent run       [--paused]
+  trellis-agent serve     [--port N] [--token TOKEN] [--origin URL[,URL...]] [--paused]
+                          run 之外再开本地 HTTP 桥，供浏览器里的客户端页面调用本地能力
+                          --token 也可用 TRELLIS_AGENT_BRIDGE_TOKEN 提供
   trellis-agent status
   trellis-agent logs      [-n 50]
 
@@ -90,6 +95,7 @@ async fn dispatch(command: &str, args: &Parsed, root: PathBuf) -> AgentResult<()
         "login" => login(&store, args).await,
         "associate" => associate(&store, args).await,
         "run" => run(store, args).await,
+        "serve" => serve(store, args).await,
         "status" => status(&store).await,
         "logs" => logs(&store, args),
         other => Err(AgentError::new(
@@ -196,6 +202,101 @@ async fn run(store: Arc<ConfigStore>, args: &Parsed) -> AgentResult<()> {
     runtime.stop("命令行进程退出");
     // `AgentRuntime::stop()` 里写 `runtime.json` 是 spawn 出去的异步任务，进程立刻退出会丢掉
     // 这次写入（桌面端常驻进程不会遇到）。这里等它落盘，最多 1s。
+    for _ in 0..20 {
+        if let Ok(raw) = tokio::fs::read_to_string(&store.paths.state_file).await {
+            if raw.contains("\"status\": \"stopped\"") || raw.contains("\"status\":\"stopped\"") {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    logging::warn("Agent 已停止");
+    println!("agent 已停止");
+    Ok(())
+}
+
+/// `run` + 本地 HTTP 桥：浏览器里的客户端页面通过它调用桌面端能力。
+async fn serve(store: Arc<ConfigStore>, args: &Parsed) -> AgentResult<()> {
+    let port_value = args
+        .value("--port")
+        .map(str::to_string)
+        .or_else(|| std::env::var("TRELLIS_AGENT_BRIDGE_PORT").ok())
+        .unwrap_or_else(|| "4518".to_string());
+    let port: u16 = port_value
+        .parse()
+        .map_err(|_| AgentError::new(code::COMMAND_INVALID, "--port 必须是数字"))?;
+    let token = args
+        .value("--token")
+        .map(str::to_string)
+        .or_else(|| std::env::var("TRELLIS_AGENT_BRIDGE_TOKEN").ok())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AgentError::new(
+                code::CONFIG_MISSING,
+                "本地桥必须指定 --token 或 TRELLIS_AGENT_BRIDGE_TOKEN",
+            )
+        })?;
+    // 默认放行回环来源；需要额外域名时用 --origin 显式追加。
+    let origins: Vec<String> = args
+        .value("--origin")
+        .map(|value| {
+            value
+                .split(',')
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let (config, _) = agent_context(&store).await?;
+    let hub = Arc::new(ControlHub::new());
+    let paused = Arc::new(AtomicBool::new(args.flag("--paused")));
+    let bridge = bridge::Bridge::new(store.clone(), hub.clone(), paused.clone(), token, origins);
+    let runtime = AgentRuntime::start(
+        store.clone(),
+        bridge.control_sink(),
+        bridge.state_sink(),
+        paused.clone(),
+        &hub,
+    )
+    .await?;
+    bridge.set_runtime(runtime.clone());
+    {
+        let pusher = bridge.clone();
+        tokio::spawn(async move { pusher.push_repositories().await });
+    }
+    let server = bridge.clone();
+    tokio::spawn(async move {
+        if let Err(error) = bridge::listen(server, port).await {
+            logging::warn(&format!("本地桥退出: {}", error.message));
+        }
+    });
+    logging::warn(&format!(
+        "Agent 已启动（本地桥 127.0.0.1:{}）：{}（{}），pid={}",
+        port,
+        config.server_url,
+        config.agent_id,
+        std::process::id()
+    ));
+    println!(
+        "agent 已启动: server={} agentId={} bridge=http://127.0.0.1:{}",
+        config.server_url, config.agent_id, port
+    );
+
+    let mut terminate = terminate_signal();
+    loop {
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => {
+                let _ = signal;
+                break;
+            }
+            _ = wait_terminate(&mut terminate) => {
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+        }
+    }
+    runtime.stop("命令行进程退出");
     for _ in 0..20 {
         if let Ok(raw) = tokio::fs::read_to_string(&store.paths.state_file).await {
             if raw.contains("\"status\": \"stopped\"") || raw.contains("\"status\":\"stopped\"") {

@@ -12,6 +12,9 @@ const apiTarget = process.env.VITE_API_TARGET || `http://127.0.0.1:${process.env
 const localPluginTarget =
   process.env.VITE_LOCAL_PLUGIN_TARGET ||
   `http://127.0.0.1:${process.env.VITE_LOCAL_PLUGIN_PORT || '4517'}`
+const localAgentTarget =
+  process.env.VITE_LOCAL_AGENT_TARGET ||
+  `http://127.0.0.1:${process.env.VITE_LOCAL_AGENT_PORT || '4518'}`
 
 export default defineConfig({
   base: './',
@@ -54,6 +57,12 @@ export default defineConfig({
         target: localPluginTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/local-plugin/, ''),
+      },
+      // 浏览器客户端（role=client）通过本机 headless agent 的本地桥调用桌面能力。
+      '/local-agent': {
+        target: localAgentTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/local-agent/, ''),
       },
       '/client-updates': {
         target: apiTarget,

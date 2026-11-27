@@ -1,10 +1,10 @@
 import type { Plugin } from 'vite'
 
-// 本机 4403 环境：页面从 127.0.0.1:4403 打开，但远端 Team 服务按 Host 匹配域名，
-// 且登录 Set-Cookie Path=/weint-spec-board、写请求 Origin 必须与 Host 同源。
+// 本机页面对远端 Team 服务的代理：页面从本机端口打开，但远端按 Host 匹配域名，
+// 且登录 Set-Cookie 带部署前缀、写请求 Origin 必须与 Host 同源。
 // 因此 /api 与 /client-updates 代理到远端时保持原始 Host/Origin 会 404/403；
 // 这里把代理请求的 Host/Origin 重写为目标域名，同时把响应 Set-Cookie Path 改回 '/'，
-// 使 4403 的页面能登录并访问远端服务端。
+// 使本机页面的登录态能落到当前源。
 export function remoteTeamProxyHeaders(): Plugin {
   const target = process.env.VITE_API_TARGET || ''
   if (!target.includes('spec-board.weintdata.cn')) return { name: 'remote-team-proxy-headers' }

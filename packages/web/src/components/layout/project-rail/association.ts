@@ -1,3 +1,4 @@
+import { invoke as transportInvoke } from '@/desktop/tauri'
 import {
   associationOwnershipCounts,
   associationTaskStateCounts,
@@ -14,11 +15,12 @@ import type {
   WorktreeStatus,
 } from './types.ts'
 
+/**
+ * 与 `@/desktop/tauri` 共用同一套传输：桌面 EXE 走 Tauri IPC，
+ * 浏览器客户端页面走本机 headless agent 的 HTTP 桥。
+ */
 export function tauriInvoke(): TauriInvoke | null {
-  const runtime = window as Window & {
-    __TAURI__?: { core?: { invoke?: TauriInvoke } }
-  }
-  return runtime.__TAURI__?.core?.invoke || null
+  return transportInvoke ?? null
 }
 
 export function normalizeLiveSyncStatus(value: unknown): LiveSyncStatus {

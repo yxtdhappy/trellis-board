@@ -418,6 +418,10 @@ impl ConfigStore {
     }
 
     async fn restrict_windows_acl(&self) -> AgentResult<()> {
+        // ACL 加固只对 Windows 有意义；非 Windows 上继续尝试只会刷 whoami.exe 失败日志。
+        if !cfg!(windows) {
+            return Ok(());
+        }
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
         let whoami = Path::new(&system_root).join("System32").join("whoami.exe");
         let icacls = Path::new(&system_root).join("System32").join("icacls.exe");

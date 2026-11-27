@@ -53,6 +53,7 @@ import type { OwnershipBranchOption, OwnershipLocalAssociation } from '@/lib/own
 import { taskInstanceKey } from '@/lib/task-view-key.js'
 import { isWorkType, type WorkType } from '@trellis-board/shared/work-types.js'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { invoke as transportInvoke } from '@/desktop/tauri'
 
 function normalizeViews(value: unknown): { id: string; name: string }[] {
   if (!Array.isArray(value)) return []
@@ -73,7 +74,6 @@ const NAV: BoardNavItem[] = [
 // 仅桌面客户端可见：管理 EXE 内置的插件宿主。
 const DESKTOP_PLUGIN_NAV: BoardNavItem = { id: 'desktop-plugins', label: '插件' }
 
-type DesktopInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 type DesktopClientIdentity = { name?: string; version?: string }
 
 export function BoardPage() {
@@ -121,8 +121,9 @@ export function BoardPage() {
     [runtime?.appName, metaAppName, clientBrandName],
   )
 
-  const desktopInvoke = (window as Window & { __TAURI__?: { core?: { invoke?: DesktopInvoke } } })
-    .__TAURI__?.core?.invoke
+  // 本地能力由 `@/desktop/tauri` 统一解析：桌面 EXE 走 IPC，
+  // 浏览器客户端页面走本机 headless agent 的 HTTP 桥，两者都算「桌面能力可用」。
+  const desktopInvoke = transportInvoke
   const isTauri = Boolean(desktopInvoke)
   const role = resolveRuntimeRole({
     injected: (window as Window & { __TRELLIS_ROLE__?: string }).__TRELLIS_ROLE__,
