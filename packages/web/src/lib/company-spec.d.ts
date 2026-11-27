@@ -72,6 +72,11 @@ export type CompanySpecApplyResult = {
 export function normalizeCompanySpecStatus(value: unknown): CompanySpecStatus | null
 export function normalizeCompanySpecPlan(value: unknown): CompanySpecPlan | null
 export function normalizeCompanySpecApplyResult(value: unknown): CompanySpecApplyResult | null
+export function companySpecSelectionLabel(
+  value: string,
+  templates?: ReadonlyArray<Pick<CompanySpecTemplateOption, 'id' | 'label'>>,
+): string
+export function companySpecStrategyLabel(value: string): string
 export function companySpecErrorMessage(error: unknown, fallback: string): string
 
 export type { CompanySpecAvailability }

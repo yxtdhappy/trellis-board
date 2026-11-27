@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { TRELLIS_VISIBLE_AGENT_TOOLS } from '@trellis-board/shared/trellis-agent-tools.js'
 import { sameLocalRepositoryPath } from '@/lib/onboarding-associations.js'
 import { pickProjectTrellisDevId } from '@/lib/team-client.js'
+import { companySpecSelectionLabel } from '@/lib/company-spec.js'
 import {
   normalizeCompanySpecAvailability,
   normalizeCompanySpecOutcome,
@@ -642,7 +643,9 @@ export function ProjectOnboardingDialog({
                         disabled={busy}
                       >
                         <SelectTrigger id="onboard-company-spec" className="w-full rounded-md">
-                          <SelectValue />
+                          <SelectValue>
+                            {companySpecSelectionLabel(companySpecSelection, companySpec.templates)}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">不套用</SelectItem>

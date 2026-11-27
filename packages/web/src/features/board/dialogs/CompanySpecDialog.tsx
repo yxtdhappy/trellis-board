@@ -24,6 +24,8 @@ import { StatusPill } from '@/components/ui/status-pill'
 import { cn } from '@/lib/utils'
 import {
   companySpecErrorMessage,
+  companySpecSelectionLabel,
+  companySpecStrategyLabel,
   normalizeCompanySpecApplyResult,
   normalizeCompanySpecPlan,
   normalizeCompanySpecStatus,
@@ -223,7 +225,9 @@ export function CompanySpecDialog({
                   disabled={planning || applying}
                 >
                   <SelectTrigger id="company-spec-template" className="w-full rounded-md">
-                    <SelectValue />
+                    <SelectValue>
+                      {companySpecSelectionLabel(selection, status.templates)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="auto">自动识别（推荐）</SelectItem>
@@ -294,7 +298,7 @@ export function CompanySpecDialog({
                         disabled={applying}
                       >
                         <SelectTrigger id="company-spec-strategy" className="w-full rounded-md">
-                          <SelectValue />
+                          <SelectValue>{companySpecStrategyLabel(strategy)}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="keep-local">保留本地修改（推荐）</SelectItem>
@@ -324,7 +328,11 @@ export function CompanySpecDialog({
                   </AlertDescription>
                 </Alert>
               ) : null}
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {error ? (
+                <p className="text-xs text-destructive break-words [overflow-wrap:anywhere]">
+                  {error}
+                </p>
+              ) : null}
             </>
           )}
         </DialogBody>

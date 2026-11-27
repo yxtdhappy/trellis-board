@@ -1,0 +1,31 @@
+{
+  "id": "company-spec-select-and-helper-path",
+  "name": "company-spec-select-and-helper-path",
+  "title": "修复公司开发规范弹窗 Select 回显与检查变更模块路径",
+  "description": "修复公司开发规范弹窗及接入弹窗的 Select 回显问题、长错误换行与 apply.mjs 查找 Trellis CLI dist/utils 路径失败问题",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "simple",
+  "work_type": "fullstack",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "flyfly6",
+  "assignee": "flyfly6",
+  "createdAt": "2026-11-27",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit",
+    "task_type_updated_at": "2026-11-27T14:31:34"
+  }
+}

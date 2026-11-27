@@ -67,17 +67,21 @@ export function normalizeCompanySpecStatus(value) {
   }
 }
 
+function fileCount(value) {
+  return Array.isArray(value) ? value.length : number(value)
+}
+
 function planFiles(value) {
   if (!value || typeof value !== 'object') {
     return { add: 0, update: 0, keep: 0, conflict: 0, delete: 0, keepDeleted: 0 }
   }
   return {
-    add: number(value.add),
-    update: number(value.update),
-    keep: number(value.keep),
-    conflict: number(value.conflict),
-    delete: number(value.delete),
-    keepDeleted: number(value.keepDeleted),
+    add: fileCount(value.add),
+    update: fileCount(value.update),
+    keep: fileCount(value.keep),
+    conflict: fileCount(value.conflict),
+    delete: fileCount(value.delete),
+    keepDeleted: fileCount(value.keepDeleted),
   }
 }
 
@@ -117,6 +121,23 @@ export function normalizeCompanySpecApplyResult(value) {
     deleted: number(raw.deleted?.length),
     warning: text(raw.warning),
   }
+}
+
+export function companySpecSelectionLabel(value, templates = []) {
+  const key = text(value)
+  if (key === 'auto') return '自动识别（推荐）'
+  if (key === 'none') return '不套用'
+  const matched = Array.isArray(templates)
+    ? templates.find((item) => item && item.id === key)
+    : null
+  return matched?.label || key
+}
+
+export function companySpecStrategyLabel(value) {
+  const key = text(value)
+  if (key === 'keep-local') return '保留本地修改（推荐）'
+  if (key === 'overwrite') return '覆盖冲突文件'
+  return key
 }
 
 export function companySpecErrorMessage(error, fallback) {

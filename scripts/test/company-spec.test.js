@@ -97,13 +97,13 @@ export function saveHashes(cwd, hashes) {
 `
 }
 
-function createFixture(root, { cliVersion = '0.6.17' } = {}) {
+function createFixture(root, { cliVersion = '0.6.17', cliEntry = 'dist/cli/index.js' } = {}) {
   const cliRoot = path.join(root, 'fake-cli')
   write(
     path.join(cliRoot, 'package.json'),
     JSON.stringify({ name: '@mindfoldhq/trellis', version: cliVersion }),
   )
-  write(path.join(cliRoot, 'dist/cli/index.js'), '')
+  write(path.join(cliRoot, cliEntry), '')
   write(path.join(cliRoot, 'dist/utils/template-fetcher.js'), fakeTemplateFetcher())
   write(path.join(cliRoot, 'dist/utils/registry-config.js'), fakeRegistryConfig())
   write(path.join(cliRoot, 'dist/utils/template-hash.js'), fakeTemplateHash())
@@ -129,7 +129,7 @@ function createFixture(root, { cliVersion = '0.6.17' } = {}) {
   write(path.join(target, '.trellis/spec/guides/index.md'), 'generic guides\n')
 
   return {
-    cliPath: path.join(cliRoot, 'dist/cli/index.js'),
+    cliPath: path.join(cliRoot, cliEntry),
     templateRoot,
     target,
   }
@@ -322,5 +322,20 @@ test('company-spec aborts with backup_failed when the backup path is blocked', (
     const applied = runHelper(fixture, baseArgs(fixture, 'apply', 'replace'))
     assert.notEqual(applied.status, 0)
     assert.equal(applied.json.code, 'backup_failed')
+  })
+})
+
+test('company-spec resolves dist/utils when --cli points to bin/trellis.js', () => {
+  withTempDir('company-spec-bin-', (root) => {
+    const fixture = createFixture(root, { cliEntry: 'bin/trellis.js' })
+    const planned = runHelper(fixture, baseArgs(fixture, 'plan'))
+    assert.equal(planned.status, 0, planned.stderr)
+    assert.equal(planned.json.ok, true)
+    assert.equal(planned.json.plan.action, 'apply')
+
+    const applied = runHelper(fixture, baseArgs(fixture, 'apply', 'replace'))
+    assert.equal(applied.status, 0, applied.stderr)
+    assert.equal(applied.json.ok, true)
+    assert.equal(applied.json.applied, true)
   })
 })

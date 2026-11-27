@@ -77,6 +77,19 @@ function findPackageRoot(cliPath) {
   return path.resolve(path.dirname(cliPath), '..', '..')
 }
 
+function resolveUtilsDir(cliPath, packageRoot) {
+  const candidates = [
+    path.join(packageRoot, 'dist', 'utils'),
+    path.join(path.dirname(path.resolve(cliPath)), '..', 'utils'),
+  ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'template-fetcher.js'))) {
+      return candidate
+    }
+  }
+  return candidates[0]
+}
+
 async function loadCliModules(cliPath) {
   const packageRoot = findPackageRoot(cliPath)
   const packageJsonPath = path.join(packageRoot, 'package.json')
@@ -88,7 +101,7 @@ async function loadCliModules(cliPath) {
     throw new Error(`Trellis CLI ${packageJson.version} is older than ${MIN_CLI_VERSION}`)
   }
 
-  const utilsDir = path.join(path.dirname(path.resolve(cliPath)), '..', 'utils')
+  const utilsDir = resolveUtilsDir(cliPath, packageRoot)
   const load = (name) => import(pathToFileURL(path.join(utilsDir, name)).href)
   const [fetcher, registryConfig, templateHash] = await Promise.all([
     load('template-fetcher.js'),
