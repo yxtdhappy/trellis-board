@@ -1,0 +1,30 @@
+{
+  "id": "plugin-python-runtime",
+  "name": "plugin-python-runtime",
+  "title": "修复插件宿主 Python 解析与 spawn EACCES 回退",
+  "description": "witops-core 下发任务报 spawn python EACCES：插件宿主按名字 spawn Python 且只对 ENOENT 回退，Windows 上 python 解析到 0 字节商店别名或不可执行文件时直接失败。改为解析可用解释器绝对路径、EACCES/EPERM 继续候选、把客户端已记录的 python_runtime 注入宿主，并统一 server 侧 Python 调用点。",
+  "status": "in_progress",
+  "dev_type": null,
+  "task_type": "complex",
+  "work_type": "backend",
+  "scope": null,
+  "package": "server",
+  "priority": "P2",
+  "creator": "kanyifei",
+  "assignee": "kanyifei",
+  "createdAt": "2026-11-27",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "team-board",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "label_source": "user-explicit"
+  }
+}
