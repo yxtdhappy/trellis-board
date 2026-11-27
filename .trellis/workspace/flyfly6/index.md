@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 64
+- **Total Sessions**: 65
 - **Last Active**: 2026-11-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~30 | Active |
+| `journal-2.md` | ~53 | Active |
 | `journal-1.md` | ~1990 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 65 | 2026-11-27 | Worktree 分支标识与服务端差异化归档同步 | `13dae1f` | `main` |
 | 64 | 2026-11-27 | 修复公司开发规范弹窗 Select 回显与检查变更模块路径 | `ee7491c` | `main` |
 | 63 | 2026-11-26 | 修复已归档任务接入误报仅本地及分支更新后提示不消除 | `5a80783` | `main` |
 | 62 | 2026-11-25 | 同步一致性与接入弹窗验收收尾 | `53a4d25`, `ff922ea` | `main` |
