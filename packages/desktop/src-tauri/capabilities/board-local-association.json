@@ -19,6 +19,7 @@
     "allow-update-check",
     "allow-update-apply",
     "allow-desktop-logout",
+    "allow-runtime-open-gate",
     "allow-associate-pending-project",
     "allow-cancel-pending-project",
     "allow-check-pending-project-push",

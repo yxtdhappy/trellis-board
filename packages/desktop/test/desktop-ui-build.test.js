@@ -164,6 +164,45 @@ test('desktop logout uses a board-only command and forgets the saved password', 
   assert.match(loginApp, /app\.serverUrl && app\.username && app\.password/)
 })
 
+test('desktop board can reopen the local runtime gate without clearing the session', () => {
+  const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
+  const capability = JSON.parse(
+    read('packages/desktop/src-tauri/capabilities/board-local-association.json'),
+  )
+  const localCapability = JSON.parse(read('packages/desktop/src-tauri/capabilities/main.json'))
+  const main = read('packages/desktop/src-tauri/src/main.rs')
+  const panel = read('packages/web/src/features/plugins/PluginPanel.tsx')
+  const issue = read('packages/web/src/features/plugins/runtime-issue.ts')
+
+  assert.match(permissions, /identifier = "allow-runtime-open-gate"/)
+  assert.match(permissions, /commands\.allow = \["runtime_open_gate"\]/)
+  assert.ok(capability.permissions.includes('allow-runtime-open-gate'))
+  assert.ok(!localCapability.permissions.includes('allow-runtime-open-gate'))
+
+  assert.match(main, /async fn runtime_open_gate\(app: AppHandle, window: WebviewWindow\)/)
+  assert.match(
+    main,
+    /async fn runtime_open_gate\(app: AppHandle, window: WebviewWindow\)[\s\S]*?ensure_board_caller\(&app, &window\)\?;[\s\S]*?navigate_local_login\(&app, &state\);\s+Ok\(\(\)\)/,
+  )
+  assert.match(main, /runtime_install,\s+runtime_open_gate,/)
+
+  // 只做导航：命令体里不得出现清会话/清密码/logout 调用。
+  const command = main.slice(
+    main.indexOf('async fn runtime_open_gate('),
+    main.indexOf('\n}\n', main.indexOf('async fn runtime_open_gate(')),
+  )
+  assert.doesNotMatch(command, /clear_desktop_session/)
+  assert.doesNotMatch(command, /forget_saved_password/)
+  assert.doesNotMatch(command, /desktop_logout/)
+
+  assert.match(
+    panel,
+    /hasPythonUnavailable\(response\.data\)|reportPythonUnavailable\(response\.data\)/,
+  )
+  assert.match(panel, /invoke\('runtime_open_gate'\)/)
+  assert.match(issue, /export const PYTHON_UNAVAILABLE = 1011/)
+})
+
 test('desktop board shows the product name and version from a board-only command', () => {
   const permissions = read('packages/desktop/src-tauri/permissions/desktop.toml')
   const capability = JSON.parse(

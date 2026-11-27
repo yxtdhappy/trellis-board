@@ -927,15 +927,19 @@ async fn script_supports_work_type(repo_path: &Path) -> bool {
     }
 }
 
-/// 环境门记录在 `client.json` 的解释器；文件已被删除时跳过该候选。
+/// 环境门记录在 `client.json` 的解释器；文件已被删除或为空时跳过该候选。
 pub(crate) fn recorded_python() -> Option<String> {
-    use crate::agent::env::ClientConfigLike;
+    recorded_python_from(&crate::config::data_dir().join("client.json"))
+}
 
-    let data_dir = crate::config::data_dir();
-    let text = std::fs::read_to_string(data_dir.join("client.json")).ok()?;
+/// 读指定 `client.json` 的 python flag；路径必须是非空普通文件，与 `is_usable_file` 对齐。
+pub(crate) fn recorded_python_from(document_path: &Path) -> Option<String> {
+    use crate::agent::env::{is_usable_file, ClientConfigLike};
+
+    let text = std::fs::read_to_string(document_path).ok()?;
     let document: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
     let flag = document.python_runtime()?;
-    Path::new(&flag.path).is_file().then_some(flag.path)
+    is_usable_file(Path::new(&flag.path)).then_some(flag.path)
 }
 
 async fn run_task_python(repo_path: &Path, args: &[String]) -> AgentResult<()> {

@@ -371,6 +371,16 @@ async fn desktop_logout(app: AppHandle, window: WebviewWindow) -> Result<(), Str
     Ok(())
 }
 
+/// 下发任务遇到本地 Python 不可用时，当前 Board origin 请求回到本地运行环境门。
+/// 只做导航：不清会话、不清已保存密码、不退出登录。
+#[tauri::command]
+async fn runtime_open_gate(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    ensure_board_caller(&app, &window)?;
+    let state = app.state::<DesktopAuthState>().inner().clone();
+    navigate_local_login(&app, &state);
+    Ok(())
+}
+
 /// 只读、无敏感数据：客户端自带页面（登录页/主窗口）也要跟随设备偏好。
 #[tauri::command]
 fn appearance_load() -> appearance::Appearance {
@@ -1283,6 +1293,7 @@ fn main() {
             runtime_status,
             runtime_set_node_path,
             runtime_install,
+            runtime_open_gate,
             live_control_pending,
             handoff_notice_pending,
             live_control_show,

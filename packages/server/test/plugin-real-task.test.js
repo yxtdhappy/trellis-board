@@ -191,3 +191,59 @@ test('真实 task.py：创建、写 prd、合并 meta、改派与阶段更新', 
     fs.rmSync(repoRoot, { recursive: true, force: true })
   }
 })
+
+test(
+  'PATH 首位是不可执行的 python 时插件仍能创建真实任务',
+  { skip: !hasPython3() || process.platform === 'win32' },
+  async () => {
+    const repoRoot = makeTrellisRepo()
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'trellis-real-task-broken-python-'))
+    const db = openPluginDatabase({
+      root: workspace,
+      databaseFile: path.join(workspace, 'board.sqlite'),
+      legacyFiles: [],
+    })
+    const blocked = path.join(workspace, 'blocked-python')
+    fs.mkdirSync(blocked, { recursive: true })
+    const plain = path.join(blocked, 'python')
+    fs.writeFileSync(plain, '#!/bin/sh\n')
+    fs.chmodSync(plain, 0o644)
+
+    const previousPath = process.env.PATH
+    const previousPython = process.env.TRELLIS_PYTHON
+    process.env.PATH = `${blocked}${path.delimiter}${previousPath}`
+    // 目录 spawn 会得到 EACCES，模拟 Windows 上不可执行的同名解释器。
+    process.env.TRELLIS_PYTHON = blocked
+    try {
+      const service = createTaskService({
+        repositories: [{ id: 'repo', name: 'repo', path: repoRoot }],
+        db,
+      })
+      const task = await service.create({
+        repositoryId: 'repo',
+        title: '坏 Python 回退',
+        description: 'PATH 首位不可执行时仍应回退到真实 python3',
+        assignee: 'alice',
+        priority: 'P1',
+        slug: 'broken-python-fallback',
+        taskType: 'simple',
+        workType: 'backend',
+      })
+      assert.match(task.relativeDir, /^\d{2}-\d{2}-broken-python-fallback$/)
+      assert.ok(
+        fs.existsSync(path.join(repoRoot, '.trellis', 'tasks', task.relativeDir, 'task.json')),
+      )
+    } finally {
+      process.env.PATH = previousPath
+      if (previousPython === undefined) delete process.env.TRELLIS_PYTHON
+      else process.env.TRELLIS_PYTHON = previousPython
+      try {
+        db.close()
+      } catch {
+        // 关闭失败不掩盖断言错误。
+      }
+      fs.rmSync(workspace, { recursive: true, force: true })
+      fs.rmSync(repoRoot, { recursive: true, force: true })
+    }
+  },
+)

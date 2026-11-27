@@ -15,9 +15,9 @@
 //! `ConfigStore` / `ControlHub` / `AgentRuntime`，不复制业务逻辑（都落在 `agent/` 里）。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -49,6 +49,15 @@ use crate::agent::trellis_cli::TrellisRuntime;
 use crate::config;
 
 const MAX_BODY: usize = 8 * 1024 * 1024;
+/// 状态事件很密集，关联列表同步给插件宿主做 3 秒节流。
+const PUSH_REPOSITORIES_INTERVAL_MS: u64 = 3_000;
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
+}
 
 /// 桥自身状态：与桌面端 `AgentService` 同构，但只依赖 `agent/` 模块。
 pub struct Bridge {
@@ -60,6 +69,7 @@ pub struct Bridge {
     events: broadcast::Sender<(String, Value)>,
     token: String,
     origins: Vec<String>,
+    pushed_at: AtomicI64,
 }
 
 impl Bridge {
@@ -80,6 +90,7 @@ impl Bridge {
             events,
             token,
             origins,
+            pushed_at: AtomicI64::new(0),
         })
     }
 
@@ -114,6 +125,19 @@ impl Bridge {
         let bridge = self.clone();
         Arc::new(move || {
             bridge.publish("desktop-state-changed", json!({ "topics": ["sidecar"] }));
+            // 关联列表变化后插件面板的「项目」下拉要跟着变，但状态事件很密集，
+            // 这里做 3 秒节流，避免每次都让宿主重排插件面板。
+            let now = now_millis();
+            let last = bridge.pushed_at.load(Ordering::Relaxed);
+            if now.saturating_sub(last) >= PUSH_REPOSITORIES_INTERVAL_MS as i64
+                && bridge
+                    .pushed_at
+                    .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+            {
+                let pusher = bridge.clone();
+                tokio::spawn(async move { pusher.push_repositories().await });
+            }
         })
     }
 
@@ -792,6 +816,10 @@ impl Bridge {
         let Ok(associations) = self.associations().await else {
             return;
         };
+        // 运行时还没加载出绑定时空列表不代表真实状态，别把宿主里已有的种子覆盖掉。
+        if associations.is_empty() && !self.is_running() {
+            return;
+        }
         let repositories: Vec<Value> = associations
             .iter()
             .filter(|association| {

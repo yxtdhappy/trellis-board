@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react'
+import { toast } from 'sonner'
 import type { PluginPanel as PluginPanelInfo } from '@/api/panels'
 import { requestDesktopPlugin } from '@/api/desktop-plugins'
 import { useAppearance } from '@/app/theme'
+import { errorMessage, invoke, isNativeTauri } from '@/desktop/tauri'
 import { withBasePath } from '@/lib/base-path.js'
+import { hasPythonUnavailable, pythonUnavailableToast } from '@/features/plugins/runtime-issue'
 
 type BridgeMessage = {
   type?: string
@@ -49,6 +52,28 @@ function isBridgeRequest(message: BridgeMessage): message is BridgeRequest {
     typeof message.id === 'string' &&
     typeof message.path === 'string'
   )
+}
+
+/** 只有桌面客户端能把页面导航回本地环境门；浏览器/Team 只给可读文案。 */
+function openRuntimeGate() {
+  if (!isNativeTauri || !invoke) {
+    toast.error('请在桌面客户端中打开运行环境门')
+    return
+  }
+  void invoke('runtime_open_gate').catch((error: unknown) => {
+    toast.error(errorMessage(error, '打开运行环境门失败'))
+  })
+}
+
+/** 插件下发因本地 Python 不可用而失败时，提示用户回环境门检查。 */
+function reportPythonUnavailable(payload: unknown) {
+  if (!hasPythonUnavailable(payload)) return
+  const { id, title, description, actionLabel } = pythonUnavailableToast()
+  toast.error(title, {
+    id,
+    description,
+    action: { label: actionLabel, onClick: openRuntimeGate },
+  })
 }
 
 export function PluginPanel({
@@ -151,6 +176,7 @@ export function PluginPanel({
             status: response.status,
             data: response.data,
           })
+          reportPythonUnavailable(response.data)
           return
         }
         const hasBody = message.body !== undefined && message.body !== null

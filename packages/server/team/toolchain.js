@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ERROR_CODES, teamError } from './errors.js'
+import { tryPythonCandidates } from '../python.js'
 import { minimalEnvironment, runProcess } from './process.js'
 
 const DEVELOPER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
@@ -88,11 +89,19 @@ export async function precheckLifecycleHooks(repoPath) {
     "hooks=config.get('hooks')",
     "print(json.dumps({'hasHooks':hooks not in (None,{},[])},sort_keys=True))",
   ].join(';')
-  const result = await runProcess('python', ['-I', '-B', '-c', code, repoPath, parserFile], {
-    cwd: repoPath,
-    env: minimalEnvironment({ PYTHONUTF8: '1' }),
-    timeoutMs: 60_000,
-  })
+  const { result } = await tryPythonCandidates(
+    (python) =>
+      runProcess(
+        python.command,
+        [...python.prefixArgs, '-I', '-B', '-c', code, repoPath, parserFile],
+        {
+          cwd: repoPath,
+          env: minimalEnvironment({ PYTHONUTF8: '1' }),
+          timeoutMs: 60_000,
+        },
+      ),
+    { env: process.env },
+  )
   let parsed
   try {
     parsed = JSON.parse(result.stdout.trim())

@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { pythonCommandCandidates } from '../python.js'
 
 const OUTPUT_LIMIT = 64 * 1024
 const ALLOWED_ENV_KEYS = [
@@ -171,20 +170,6 @@ export function runProcess(
       if (settled) return
       settled = true
       cleanup()
-      const candidates = command === 'python' ? pythonCommandCandidates(env) : []
-      const next = candidates[candidates.indexOf('python') + 1]
-      if (error.code === 'ENOENT' && next) {
-        runProcess(next, args, {
-          cwd,
-          env,
-          timeoutMs,
-          allowFailure,
-          maxOutputBytes,
-          redact,
-          signal,
-        }).then(resolve, reject)
-        return
-      }
       reject(error)
     })
     child.once('close', (code, signal) => {

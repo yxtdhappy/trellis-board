@@ -65,6 +65,16 @@ export function describeTaskError(message, slug = '') {
   return errorLine || lines[0] || '下发失败'
 }
 
+/**
+ * 失败项保留宿主返回的应用错误码（例如本地 Python 不可用的 1011），
+ * 让面板能据此引导用户回到运行环境门；JSON-RPC 负数码和字符串错误码不透传。
+ */
+export function failureResult(error, reason) {
+  const code = error?.code
+  if (!Number.isInteger(code) || code <= 0) return { status: 'failed', reason }
+  return { status: 'failed', reason, code }
+}
+
 export function createDispatch({ ctx, config, client, session, links, onChanged = () => {} }) {
   const dictionaryCache = new Map()
   const dictionaryTtl = Number(config.cacheTtlMs || 0)
@@ -846,7 +856,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
           message: reason,
           code: error.code ?? null,
         })
-        results.push({ ...entry, status: 'failed', reason })
+        results.push({ ...entry, ...failureResult(error, reason) })
       }
     }
     return results
@@ -999,7 +1009,7 @@ export function createDispatch({ ctx, config, client, session, links, onChanged 
       if (error?.code === 1001 || error?.authExpired) throw error
       const reason = describeError(error, slug)
       ctx.log.error('下发失败', { businessId: id, message: reason, code: error.code ?? null })
-      return { status: 'failed', reason }
+      return failureResult(error, reason)
     }
   }
 

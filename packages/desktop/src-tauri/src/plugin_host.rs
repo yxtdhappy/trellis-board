@@ -196,6 +196,18 @@ fn runtime_dir() -> Result<PathBuf, String> {
 
 // ---------------------------------------------------------------- 生命周期
 
+/// 父进程显式设置的 `TRELLIS_PYTHON` 优先（与 `run_task_python` 的候选顺序一致），
+/// 未设置时才注入环境门记录的绝对路径。
+fn python_env_for_host(
+    parent: Option<std::ffi::OsString>,
+    recorded: Option<String>,
+) -> Option<String> {
+    if parent.is_some() {
+        return None;
+    }
+    recorded
+}
+
 async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
     let state = state(app)?;
     let mut inner = state.inner.lock().await;
@@ -263,6 +275,12 @@ async fn ensure_running(app: &AppHandle) -> Result<bool, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(python) = python_env_for_host(
+        std::env::var_os("TRELLIS_PYTHON"),
+        crate::agent::task_command::recorded_python(),
+    ) {
+        command.env("TRELLIS_PYTHON", python);
+    }
     #[cfg(windows)]
     {
         command.creation_flags(0x0800_0000);

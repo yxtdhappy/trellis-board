@@ -140,3 +140,47 @@ fn secrets_roundtrip_uses_dpapi() {
     let plaintext = dpapi_unprotect(&ciphertext).unwrap();
     assert_eq!(plaintext, payload);
 }
+
+#[test]
+fn parent_trellis_python_wins_over_recorded_python() {
+    let recorded = Some("/opt/trellis/bin/python3".to_string());
+    assert_eq!(
+        python_env_for_host(
+            Some(std::ffi::OsString::from("/usr/bin/python3")),
+            recorded.clone()
+        ),
+        None
+    );
+    assert_eq!(python_env_for_host(None, recorded.clone()), recorded);
+    assert_eq!(python_env_for_host(None, None), None);
+}
+
+#[test]
+fn recorded_python_path_is_injected_into_host() {
+    let root = temp_dir("python-env");
+    let python = root.join("python3");
+    std::fs::write(&python, b"python").expect("写入解释器");
+    let document = root.join("client.json");
+    std::fs::write(
+        &document,
+        json!({
+            "python_runtime": {
+                "version": "3.12.8",
+                "path": python.display().to_string(),
+                "source": "path",
+                "installed_at": "2026-11-27T00:00:00Z"
+            }
+        })
+        .to_string(),
+    )
+    .expect("client.json");
+
+    let recorded = crate::agent::task_command::recorded_python_from(&document);
+    assert_eq!(recorded.as_deref(), Some(python.to_string_lossy().as_ref()));
+    assert_eq!(python_env_for_host(None, recorded.clone()), recorded);
+    assert_eq!(
+        python_env_for_host(Some("C:/Python312/python.exe".into()), recorded),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

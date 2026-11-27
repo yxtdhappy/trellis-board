@@ -63,7 +63,9 @@ export function useLocalTaskState(taskSpaceIds: string[]): LocalTaskStateResult 
       const ticket = ++generation.current
       const call = invoke
       try {
-        const results = await Promise.all(
+        // 未关联的任务空间会返回 BINDING_UNKNOWN：单个失败不能拖垮整批，
+        // 否则一个没关联的团队项目会让所有本地状态徽标停在旧值。
+        const results = await Promise.allSettled(
           ids.map((taskSpaceId) => call<unknown>('live_local_task_state', { taskSpaceId })),
         )
         if (ticket !== generation.current) return
@@ -72,7 +74,9 @@ export function useLocalTaskState(taskSpaceIds: string[]): LocalTaskStateResult 
           readonlyDirs: new Set(),
           archivedResidue: new Set(),
         }
-        results.forEach((raw, index) => {
+        results.forEach((result, index) => {
+          if (result.status !== 'fulfilled') return
+          const raw = result.value
           const record: Record<string, unknown> =
             raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
           const taskSpaceId = ids[index]
