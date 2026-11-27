@@ -4,6 +4,7 @@ import {
   createHarness,
   fixtureModule,
   waitFor,
+  writePluginConfig,
 } from '@trellis-board/test-support/plugin-runtime.js'
 
 function echoPlugin(extra = {}) {
@@ -59,6 +60,26 @@ test('事件按 at-least-once 投递，插件 ack 后落库', async () => {
     assert.deepEqual(harness.store.getState('echo', 'last:task.created'), {
       taskKey: 'repo::t1',
     })
+  } finally {
+    await harness.cleanup()
+  }
+})
+
+test('配置重载时把开关从关到开的插件自动拉起', async () => {
+  const harness = await createHarness({
+    plugins: [echoPlugin({ enabled: false })],
+    start: false,
+  })
+  try {
+    const before = harness.supervisor.list().find((item) => item.id === 'echo')
+    assert.equal(before.status, 'disabled')
+
+    writePluginConfig(harness.workspace, [echoPlugin({ enabled: true })])
+    const result = await harness.supervisor.reloadConfig({ reason: 'test' })
+    const after = harness.supervisor.list().find((item) => item.id === 'echo')
+    assert.deepEqual(result.started, ['echo'])
+    assert.equal(after.status, 'running')
+    assert.ok(after.pid > 0)
   } finally {
     await harness.cleanup()
   }
