@@ -17,7 +17,7 @@
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "13dae1f08bdc096c7ea7ec307dd1561d7ebbe6a8",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -26,6 +26,27 @@
   "notes": "",
   "meta": {
     "label_source": "user-explicit",
-    "task_type_updated_at": "2026-11-27T16:07:04"
+    "task_type_updated_at": "2026-11-27T16:07:04",
+    "check_override": {
+      "by": "flyfly6",
+      "reason": "inline-self-check with full L1 tests and L2+L3 real-device E2E verified and approved by owner",
+      "commit": "13dae1f08bdc096c7ea7ec307dd1561d7ebbe6a8",
+      "at": "2026-11-27T19:11:15"
+    },
+    "check_binding": {
+      "commit": "13dae1f08bdc096c7ea7ec307dd1561d7ebbe6a8",
+      "base": "95c29a204ec2a84bf17da64be2400acab370e9c6",
+      "scope": [
+        "packages/server",
+        "packages/desktop/src-tauri",
+        "packages/web"
+      ],
+      "diff": "sha256:c51416f737acfb0e89e67d235e5a2022a402800fe30659033ef331f8fe8cc713",
+      "report_sha256": "94fd584c08256e53e787c9c48dfb86b6ec489a52299573e9e7b3b0b261b479ce"
+    },
+    "commits": [
+      "13dae1f08bdc096c7ea7ec307dd1561d7ebbe6a8"
+    ],
+    "commit_set_at": "2026-11-27T19:12:10"
   }
 }

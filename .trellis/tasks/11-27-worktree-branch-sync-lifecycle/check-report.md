@@ -5,7 +5,7 @@ session: antigravity-faa86e01
 commit: ""
 base: 95c29a204ec2a84bf17da64be2400acab370e9c6
 scope: packages/server,packages/desktop/src-tauri,packages/web
-diff: sha256:ec684c4a96ebe1a89c7371906fec9c329f85d1d0a5a5bef674a2772a139266f0
+diff: sha256:c51416f737acfb0e89e67d235e5a2022a402800fe30659033ef331f8fe8cc713
 ---
 # Check Report: Worktree 分支标识与服务端差异化归档同步
 
