@@ -96,3 +96,41 @@ Added trellis.user.current and trellis.projects.developers core capabilities, re
 ### Next Steps
 
 - 若要让插件完全不写 prd.md，需另开任务改三处占位检测（方案 B）
+
+
+## Session 4: 修复插件宿主 Python 解析与 spawn EACCES 回退
+<!-- trellis-session: v=2 fp=5d76bc22799ca242 -->
+
+**Date**: 2026-11-27
+**Task**: 修复插件宿主 Python 解析与 spawn EACCES 回退
+**Package**: server
+**Branch**: `main`
+
+### Summary
+
+插件宿主不再裸 spawn python：解析 client.json 记录/PATH/Windows 安装目录，跳过 0 字节别名，spawn 失败继续候选并返回 1011；Rust 自愈 flag、注入 TRELLIS_PYTHON，新增 runtime_open_gate；witops-core 保留错误码。
+
+### Main Changes
+
+- server: 统一 Python 候选解析与 ENOENT/EACCES/EPERM/EFTYPE 回退，createTask 透传 env
+- desktop: flag 自愈、宿主注入、runtime_open_gate 与 Board capability 白名单
+- witops-core: failureResult 保留数值业务错误码
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `20a5c21c` | fix(runtime): resolve a runnable Python for plugin task creation |
+| `74d97475` | chore(task): archive 11-27-plugin-python-runtime |
+
+### Testing
+
+- [OK] Linux yarn test --scope=all：963 pass / 0 fail / 3 skip；Windows 单测与 cargo 461 pass；Windows 构建与启动通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 0.5.18 已安装 runtime 需随新版客户端更新后生效
